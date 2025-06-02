@@ -91,7 +91,8 @@ export default class Bitrix24Sync extends Plugin {
       this.bitrix24Api,
       this.mappingManager,
       this.app.vault,
-      Number(this.settings.lastSync)||0
+      // Number(this.settings.lastSync)||0
+      0
     );
   }
 
@@ -133,25 +134,25 @@ export default class Bitrix24Sync extends Plugin {
     this.isSyncing = true;
 
     try {
-      const arrParents=[{folderId:'19477', folderName:'Мой obsidian'}];
+      this.mappingManager.mappings=[];
+      const arrParents=[{folderId:'19477', folderName:'/'}];
       for (const parent of arrParents){
          this.mappingManager.add({
           fileId:parent.folderId,
-          filePath:'./',
+          filePath:'',
           bitrixUrl:'',
           fileName:parent.folderName,
-          lastSyncTimestampBitrix:0,
+          lastUpdateTimestampBitrix:0,
           isFolder:true,
           lastSyncTimestamp:0
         });
       }
+      this.syncService.setLastSync(this.settings.lastSync||0);
+      // this.syncService.setLastSync(0);
+
       await this.syncService.fillMapping(arrParents);
       await this.syncService.sync();
-      console.log('mappings', this.mappingManager.toJSON());
-
-
-
-
+      
       this.settings.lastSync=new Date().getTime();
       this.settings.mappings=this.mappingManager.toJSON();
       this.saveSettings();
@@ -287,6 +288,7 @@ class Bitrix24SyncSettingTab extends PluginSettingTab {
           this.plugin.settings.expires_in=this.tempSettings.expires_in;
           this.plugin.settings.refresh_token=this.tempSettings.refresh_token;
           await this.plugin.saveSettings();
+          this.plugin.initializeComponents();
           new Notice('Настройки сохранены')
         } catch (error) {
           console.error('Ошибка сохранения настроек:', error);

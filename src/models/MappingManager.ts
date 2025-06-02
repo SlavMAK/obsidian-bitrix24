@@ -1,4 +1,4 @@
-import { Vault } from "obsidian";
+import { normalizePath, Vault } from "obsidian";
 
 export interface FileMapping {
   fileId: string;          // ID файла в Obsidian
@@ -41,7 +41,8 @@ export class MappingManager {
   }
 
   public getMappingByLocalPath(path: string): FileMapping | undefined {
-    return this.mappings.find(el=>((el.filePath+el.fileName)===path));
+    const normalizedPath=normalizePath(path);
+    return this.mappings.find(el=>(normalizePath(el.filePath+'/'+el.fileName)===normalizedPath));
   }
 
   public getById(id:string){
