@@ -49,6 +49,11 @@ export default class Bitrix24Sync extends Plugin {
     this.addSettingTab(settingsTab);
     this.addCommands();
 
+    this.registerEvent(
+      this.app.vault.on('rename', (file, oldPath)=>{
+        this.syncService.addMoveFile(file, oldPath, file.path);
+      })
+    )
   }
 
   onunload() {
@@ -86,6 +91,7 @@ export default class Bitrix24Sync extends Plugin {
       this.bitrix24Api,
       this.mappingManager,
       this.app.vault,
+      this.app,
       // Number(this.settings.lastSync)||0
       0
     );

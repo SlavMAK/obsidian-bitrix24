@@ -66,7 +66,10 @@ export class Bitrix24Api {
             return response as unknown as T;
           }
       } catch (error) {
-        console.error('Error in HTTP request:', error);
+        console.error('Error in HTTP request:', error, {
+          url,
+          options
+        });
         throw error;
       }
     }
