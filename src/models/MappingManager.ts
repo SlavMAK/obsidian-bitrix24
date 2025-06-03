@@ -1,13 +1,14 @@
-import { normalizePath, Vault } from "obsidian";
+import { Vault } from "obsidian";
 
 export interface FileMapping {
-  fileId: string;          // ID файла в Obsidian
-  filePath: string;        // Путь к файлу
-  fileName:string,
+  id: string;          // ID файла в Obsidian
+  path: string;        // Полный путь к файлу (например Мой обсидиан/test.md)
+  name:string,        // Имя файла (test.md)
   isFolder:boolean,
-  bitrixUrl:string,
-  lastUpdateTimestampBitrix: number;    // Время последнего изменения файла в битриксе
-  lastSyncTimestamp: number;    // Время последнего изменения файла
+  bitrixUrl:string,       //Путь скачивания файла в битриксе \\  TODO: Удалить
+
+  lastLocalMtime:number,      // Время последнего изменения файла в локальной системе
+  lastUpdatBitrix: number;    // Время последнего изменения файла в битриксе
 }
 
 export class MappingManager {
@@ -26,12 +27,11 @@ export class MappingManager {
   }
 
   public add(fileMapping: FileMapping) {
-    const currentMap=this.getById(fileMapping.fileId);
+    const currentMap=this.getById(fileMapping.id);
     if (currentMap){
-      currentMap.filePath=fileMapping.filePath;
-      currentMap.lastUpdateTimestampBitrix=fileMapping.lastUpdateTimestampBitrix?new Date(fileMapping.lastUpdateTimestampBitrix).getTime():currentMap.lastUpdateTimestampBitrix;
-      currentMap.lastSyncTimestamp=fileMapping.lastSyncTimestamp?new Date(fileMapping.lastSyncTimestamp).getTime():fileMapping.lastSyncTimestamp;
-      currentMap.fileName=fileMapping.fileName||currentMap.fileName;
+      currentMap.path=fileMapping.path;
+      currentMap.lastUpdatBitrix=fileMapping.lastUpdatBitrix?new Date(fileMapping.lastUpdatBitrix).getTime():currentMap.lastUpdatBitrix;
+      currentMap.name=fileMapping.name||currentMap.name;
       currentMap.bitrixUrl=fileMapping.bitrixUrl||currentMap.bitrixUrl;
       currentMap.isFolder=fileMapping.isFolder!==undefined?fileMapping.isFolder:currentMap.isFolder;
     }
@@ -41,12 +41,11 @@ export class MappingManager {
   }
 
   public getMappingByLocalPath(path: string): FileMapping | undefined {
-    const normalizedPath=normalizePath(path);
-    return this.mappings.find(el=>(normalizePath(el.filePath+'/'+el.fileName)===normalizedPath));
+    return this.mappings.find(el=>el.path===path);
   }
 
   public getById(id:string){
-    return this.mappings.find(el=>el.fileId===id);
+    return this.mappings.find(el=>el.id===id);
   }
   
   // Десериализация данных после загрузки
