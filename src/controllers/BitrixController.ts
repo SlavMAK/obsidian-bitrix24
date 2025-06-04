@@ -89,10 +89,23 @@ export class BitrixController{
       new Notice('Ошибка при обработке файла '+result.error());
       return;
     }
-    this.mappingManager.set(bitrixMap.id, {
-      lastLocalMtime:file.stat.mtime,
-      lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
-    });
+    const mapping=this.mappingManager.getById(bitrixMap.id);
+    if (mapping){
+      this.mappingManager.set(bitrixMap.id, {
+        lastLocalMtime:file.stat.mtime,
+        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
+      });
+    }
+    else{
+      this.mappingManager.add({
+        id:result.data().ID,
+        path:file.path,
+        name:file.name,
+        isFolder:false,
+        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
+        lastLocalMtime:file.stat.mtime
+      });
+    }
   }
 
   async updateFileByContent(file:BitrixMapElement, content:string){
@@ -258,7 +271,7 @@ export class BitrixController{
   /**
    * Конвертирует ArrayBuffer в строку base64
    */
-  arrayBufferToBase64(buffer: ArrayBuffer): string {
+  arrayBufferToBase64(buffer: ArrayBuffer| Uint8Array): string {
     let binary = '';
     const bytes = new Uint8Array(buffer);
     for (let i = 0; i < bytes.byteLength; i++) {

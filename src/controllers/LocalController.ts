@@ -1,14 +1,15 @@
 import { Notice, TFile, Vault } from "obsidian";
 import { universalDownloadFile } from "src/helpers/universalDownloadFile";
 import { BitrixMapElement } from "src/models/BitrixMap";
-import { MappingManager } from "src/models/MappingManager";
+import { FileMapping, MappingManager } from "src/models/MappingManager";
 
 export const ACTION={
   CREATE_FILE:'createFileInLocal',
   UPDATE_FILE:'updateFileInLocal',
   CREATE_FOLDER:'createFolderInLocal',
   DELETE_FILE:'deleteFileInLocal',
-  DELETE_FOLDER:'deleteFolderInLocal'
+  DELETE_FOLDER:'deleteFolderInLocal',
+  MOVE_FILE:'moveFileInLocal',
 };
 
 
@@ -82,6 +83,20 @@ export class LocalController{
         lastUpdatBitrix:bitrixMap.lastUpdate,
       });
     }
+  }
+
+  public async moveFile(file:TFile, bitrixMap:BitrixMapElement, mapping:FileMapping){
+    await this.vault.rename(file, bitrixMap.path);
+    if (!mapping) {
+      throw new Error('mapping not found and required!');
+    }
+    const abstractFile=this.vault.getAbstractFileByPath(bitrixMap.path);
+    if (!abstractFile){
+      throw new Error(`abstractFile not found by path ${bitrixMap.path}`);
+    }
+    mapping.path=bitrixMap.path;
+    mapping.name=abstractFile.name;
+    mapping.lastUpdatBitrix=bitrixMap.lastUpdate;
   }
 
   public async updateFileByContent(file:TFile, content:string , time: number){

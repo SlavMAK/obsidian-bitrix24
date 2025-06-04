@@ -20,11 +20,13 @@ interface Bitrix24SyncSettings {
   access_token: string;
   mappings:string;
   lastSync:number;
+  currentUserId:number;
 }
 
 const DEFAULT_SETTINGS: Bitrix24SyncSettings = {
   mappings:'[]',
   client_endpoint: "",
+  currentUserId:0,
   refresh_token: "",
   expires_in: 0,
   syncInterval: 30,
@@ -40,20 +42,37 @@ export default class Bitrix24Sync extends Plugin {
   mappingManager:MappingManager
 
   async onload() {
-    console.log("Loading Bitrix24 Sync plugin");
     await this.loadSettings();
+    console.log("Loading Bitrix24 Sync plugin. Period sync: "+this.settings.syncInterval);
 
     this.initializeComponents();
     //Вкладка настроек
     const settingsTab=new Bitrix24SyncSettingTab(this.app, this, {clientId, clientSecret})
     this.addSettingTab(settingsTab);
     this.addCommands();
-
+    
     this.registerEvent(
-      this.app.vault.on('rename', (file, oldPath)=>{
-        this.syncService.addMoveFile(file, oldPath, file.path);
+      this.app.vault.on('rename', async (file, oldPath)=>{
+        this.isSyncing=true;
+        try {
+          const localFile=await this.app.vault.getFileByPath(file.path);
+          if (!localFile) throw new Error('Не удалось получить файл по пути '+file.path);
+          this.syncService.addMoveFile(file, oldPath, file.path);
+          await this.syncService.checkLocalFile(localFile);
+          this.syncService.clearMovedFiles();
+          await this.syncService.processFileQueue();
+          this.settings.lastSync=new Date().getTime();
+          this.settings.mappings=this.mappingManager.toJSON();
+          await this.saveSettings();
+        } catch (error) {
+          new Notice('Ошибка выполнения команды перемещения файла: '+error.message);
+        }
+        finally{
+          this.isSyncing=false;
+        }
       })
     )
+    this.addPeriodicSync();
   }
 
   onunload() {
@@ -112,6 +131,12 @@ export default class Bitrix24Sync extends Plugin {
     });
   }
 
+  async addPeriodicSync(){
+    if (this.isSyncing) return;
+    await this.syncWithBitrix();
+    setTimeout(()=>this.addPeriodicSync(), this.settings.syncInterval*1000);
+  }
+
   async syncWithBitrix(){
     if (!this.settings.access_token || !this.settings.client_endpoint) {
       new Notice('Please configure Bitrix24 API access in settings');
@@ -130,7 +155,6 @@ export default class Bitrix24Sync extends Plugin {
       this.mappingManager.add({
         id:folderId,
         path:'/',
-        bitrixUrl:'',
         name:'root',
         isFolder:true,
         lastLocalMtime:new Date().getTime(),
