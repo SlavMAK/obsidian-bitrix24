@@ -1,6 +1,8 @@
 import {
   Notice,
   Plugin,
+  TFile,
+  TFolder,
 } from "obsidian";
 import { Bitrix24Api } from "src/api/bitrix24-api";
 import { BitrixMap } from "src/models/BitrixMap";
@@ -55,12 +57,26 @@ export default class Bitrix24Sync extends Plugin {
       this.app.vault.on('rename', async (file, oldPath)=>{
         this.isSyncing=true;
         try {
-          const localFile=await this.app.vault.getFileByPath(file.path);
-          if (!localFile) throw new Error('Не удалось получить файл по пути '+file.path);
-          this.syncService.addMoveFile(file, oldPath, file.path);
-          await this.syncService.checkLocalFile(localFile);
-          this.syncService.clearMovedFiles();
-          await this.syncService.processFileQueue();
+          if (file instanceof TFile){
+            if (this.syncService.isAwaitMoveByNewPath(file.parent?.path||'')){
+              console.log('Не обрабатываем перемещение файла, так как сейчас перемещается его родитель - ', file.path);
+              return;
+            }
+            const localFile=await this.app.vault.getFileByPath(file.path);
+            if (!localFile) throw new Error('Не удалось получить файл по пути '+file.path);
+            this.syncService.addMoveFile(file, oldPath, file.path);
+            await this.syncService.checkLocalFile(localFile);
+            this.syncService.clearMovedFiles();
+            await this.syncService.processFileQueue();
+          }
+          if (file instanceof TFolder){
+            const localFolder=await this.app.vault.getFolderByPath(file.path);
+            if (!localFolder) throw new Error('Не удалось получить папку по пути '+file.path);
+            this.syncService.addMoveFile(file, oldPath, file.path);
+            await this.syncService.checkLocalFolder(localFolder);
+            this.syncService.clearMovedFiles();
+            await this.syncService.processFileQueue();
+          }
           this.settings.lastSync=new Date().getTime();
           this.settings.mappings=this.mappingManager.toJSON();
           await this.saveSettings();

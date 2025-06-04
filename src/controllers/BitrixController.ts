@@ -185,7 +185,7 @@ export class BitrixController{
       });
     }
 
-    this.updateMappingAfterMoveFolder(oldPath, folder.path);
+    this.mappingManager.updateMappingAfterMoveFolder(oldPath, folder.path);
   }
 
   async moveFile(fileAbstract:TAbstractFile, oldPath:string){
@@ -242,15 +242,6 @@ export class BitrixController{
         path:file.path,
         lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
       });
-    }
-  }
-
-  public updateMappingAfterMoveFolder(oldFolderPath:string, newPath:string){
-    const regex=new RegExp(`^${oldFolderPath}/(.*)`);
-    const childRecords=this.mappingManager.mappings.filter(el=>regex.test(el.path));
-    for (const child of childRecords){
-      const newPathChild=child.path.replace(regex, newPath+'/$1');
-      child.path=newPathChild;
     }
   }
 

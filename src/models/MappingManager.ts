@@ -52,6 +52,15 @@ export class MappingManager {
   public getById(id:string){
     return this.mappings.find(el=>el.id===id);
   }
+
+  public updateMappingAfterMoveFolder(oldFolderPath:string, newPath:string){
+    const regex=new RegExp(`^${oldFolderPath}/(.*)`);
+    const childRecords=this.mappings.filter(el=>regex.test(el.path));
+    for (const child of childRecords){
+      const newPathChild=child.path.replace(regex, newPath+'/$1');
+      child.path=newPathChild;
+    }
+  }
   
   // Десериализация данных после загрузки
   static fromJSON(vault: Vault, json: string): MappingManager {

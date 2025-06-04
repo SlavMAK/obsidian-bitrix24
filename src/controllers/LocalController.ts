@@ -1,4 +1,4 @@
-import { Notice, TFile, Vault } from "obsidian";
+import { Notice, TFile, TFolder, Vault } from "obsidian";
 import { universalDownloadFile } from "src/helpers/universalDownloadFile";
 import { BitrixMapElement } from "src/models/BitrixMap";
 import { FileMapping, MappingManager } from "src/models/MappingManager";
@@ -10,6 +10,7 @@ export const ACTION={
   DELETE_FILE:'deleteFileInLocal',
   DELETE_FOLDER:'deleteFolderInLocal',
   MOVE_FILE:'moveFileInLocal',
+  MOVE_FOLDER:'moveFolderInLocal'
 };
 
 
@@ -85,26 +86,43 @@ export class LocalController{
     }
   }
 
-  public async moveFile(file:TFile, bitrixMap:BitrixMapElement, mapping:FileMapping){
+  public async moveFolder(folder:TFolder, bitrixMap:BitrixMapElement, localMap:FileMapping){
+    const oldPath=folder.path;
+    if (!localMap){
+      throw new Error('localMap not found and required '+folder.path);
+    }
+    await this.vault.rename(folder, bitrixMap.path);
+    const abstractFile=this.vault.getAbstractFileByPath(bitrixMap.path);
+    if (!abstractFile){
+      throw new Error(`abstractFile not found by path ${bitrixMap.path}`);
+    }
+    localMap.path=bitrixMap.path;
+    localMap.name=bitrixMap.name;
+    localMap.lastUpdatBitrix=bitrixMap.lastUpdate;
+
+    this.mappingManager.updateMappingAfterMoveFolder(oldPath, bitrixMap.path);
+  }
+
+  public async moveFile(file:TFile, bitrixMap:BitrixMapElement, localMap:FileMapping){
     await this.vault.rename(file, bitrixMap.path);
-    if (!mapping) {
+    if (!localMap) {
       throw new Error('mapping not found and required!');
     }
     const abstractFile=this.vault.getAbstractFileByPath(bitrixMap.path);
     if (!abstractFile){
       throw new Error(`abstractFile not found by path ${bitrixMap.path}`);
     }
-    mapping.path=bitrixMap.path;
-    mapping.name=abstractFile.name;
-    mapping.lastUpdatBitrix=bitrixMap.lastUpdate;
+    localMap.path=bitrixMap.path;
+    localMap.name=abstractFile.name;
+    localMap.lastUpdatBitrix=bitrixMap.lastUpdate;
   }
 
   public async updateFileByContent(file:TFile, content:string , time: number){
     console.log(time, new Date(time));
     await this.vault.adapter.write(file.path, content, {mtime:time});
-    const mapping=this.mappingManager.getMappingByLocalPath(file.path);
-    if (!mapping) return;
-    this.mappingManager.set(mapping?.id, {
+    const localMap=this.mappingManager.getMappingByLocalPath(file.path);
+    if (!localMap) return;
+    this.mappingManager.set(localMap?.id, {
       lastLocalMtime:time,
     });
   }

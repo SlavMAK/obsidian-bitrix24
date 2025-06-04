@@ -48,6 +48,12 @@ export class SyncService {
       this.movedFiles.push({file, oldPath, newPath});
     }
 
+    public isAwaitMoveByNewPath(newPath:string){
+      const inMovedFiles=this.movedFiles.find(el=>el.newPath===newPath)!==undefined;
+      asfasgasgh<asgdsfhsdfgvdgyhfd hsfd g afgha дОТЕЛЫВАТЬ ТУТ. СДЕЛАТЬ ПРОВЕРКУ НАЛИЧИЯ ПУТИ ЕЩЁ И В ОЧЕРЕДИ НА ПЕРЕМЕЩЕНИЕ
+      return ;
+    }
+
     public clearMovedFiles(){
       this.movedFiles=[];
     }
@@ -71,8 +77,6 @@ export class SyncService {
       this.lastSync=lastSync;
     }
 
-
-
     async sync(bitrixMap:BitrixMap){
 
       this.bitrixMap=bitrixMap;
@@ -93,7 +97,7 @@ export class SyncService {
       this.syncFolders(obsidianFolders);
       await this.syncFiles(obsidianFiles);
       this.movedFiles=[];
-      this.processFileQueue();
+      await this.processFileQueue();
       console.log(this.fileQueue);
     }
 
@@ -123,7 +127,10 @@ export class SyncService {
               await this.localController.updateFile(item.data.localFile as TFile, item.data.file as BitrixMapElement);
               break;
             case ACTION_BITRIX.MOVE_FOLDER:
-              await this.bitrixController.moveFolder(item.data.localAbstract as TAbstractFile, item.data.oldPath as string);
+              await this.bitrixController.moveFolder(item.data.localFolder as TFolder, item.data.oldPath as string);
+              break;
+            case ACTION_LOCAL.MOVE_FOLDER:
+              await this.localController.moveFolder(item.data.localFolder as TFolder, item.data.folder as BitrixMapElement, item.data.localMapping as FileMapping);
               break;
             case 'updateBitrixAndLocalFile':
               await this.bitrixController.updateFileByContent(item.data.file as BitrixMapElement, item.data.content||"");
@@ -141,7 +148,7 @@ export class SyncService {
       }
     }
 
-    public async checkLocalFile(localFile:TFile){
+    public async checkLocalFile(localFile:TFile){ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
       const moved=this.movedFiles.find(el=>el.newPath===localFile.path);
       const result:{created:number, deleted:number, errors:string[], changedFiles:string[]} = { created: 0, deleted: 0, errors: [], changedFiles:[] };
       if (moved){
@@ -156,11 +163,11 @@ export class SyncService {
         // this.bitrixController.moveFile(moved.file, moved.oldPath);
         return result;
       }
-      const mapping = this.mappingManager.getMappingByLocalPath(localFile.path);
+      const localMapping = this.mappingManager.getMappingByLocalPath(localFile.path);
       let bitrixMapping = this.bitrixMap.map.find(el=>el.path===localFile.path);
       // const mtime=localFile.stat.mtime; //Нужно для сравнения и обновления
 
-      if (!bitrixMapping&&!mapping) {
+      if (!bitrixMapping&&!localMapping) {
         // Файл не существует в Битрикс.Диск, добавляем в очередь на создание
         this.fileQueue.push({
           action: ACTION_BITRIX.CREATE_FILE,
@@ -168,16 +175,16 @@ export class SyncService {
         });
         result.created++;
       }
-      else if(!mapping&&bitrixMapping){
+      else if(!localMapping&&bitrixMapping){
         console.log('!mapping && bitrixMapping');
         await this.resolveConflict(localFile, bitrixMapping);
         console.log('resolved');
       }
-      else if(bitrixMapping&&mapping){
+      else if(bitrixMapping&&localMapping){
         result.changedFiles.push(bitrixMapping.id);
         if (
-          mapping.lastLocalMtime<localFile.stat.mtime //Обновление файла в ФС было позже чем в мапинге
-          &&mapping.lastUpdatBitrix>=bitrixMapping.lastUpdate //Обновление файла в битриксе не было
+          localMapping.lastLocalMtime<localFile.stat.mtime //Обновление файла в ФС было позже чем в мапинге
+          &&localMapping.lastUpdatBitrix>=bitrixMapping.lastUpdate //Обновление файла в битриксе не было
         ){
           this.fileQueue.push({
             action: ACTION_BITRIX.UPDATE_FILE,
@@ -186,8 +193,8 @@ export class SyncService {
         }
 
         if (
-          mapping.lastLocalMtime>=localFile.stat.mtime //В файловой системе не было обновления
-          &&mapping.lastUpdatBitrix<bitrixMapping.lastUpdate //В битриксе было обновление
+          localMapping.lastLocalMtime>=localFile.stat.mtime //В файловой системе не было обновления
+          &&localMapping.lastUpdatBitrix<bitrixMapping.lastUpdate //В битриксе было обновление
         ){
           this.fileQueue.push({
             action: ACTION_LOCAL.UPDATE_FILE,
@@ -196,21 +203,21 @@ export class SyncService {
         }
 
         if (
-          mapping.lastLocalMtime<localFile.stat.mtime
-          &&mapping.lastUpdatBitrix<bitrixMapping.lastUpdate
+          localMapping.lastLocalMtime<localFile.stat.mtime
+          &&localMapping.lastUpdatBitrix<bitrixMapping.lastUpdate
         ){
           console.log('!mapping && bitrixMapping');
           await this.resolveConflict(localFile, bitrixMapping);
           console.log('resolved');
         }
       }
-      if (mapping&&!bitrixMapping){
-        bitrixMapping=this.bitrixMap.map.find(el=>el.id===mapping.id);
+      if (localMapping&&!bitrixMapping){
+        bitrixMapping=this.bitrixMap.map.find(el=>el.id===localMapping.id);
         if (bitrixMapping){//Файл перемещён в битриксе
-          this.movedFiles.push({file:localFile, oldPath:mapping.path, newPath:bitrixMapping.path});
+          this.movedFiles.push({file:localFile, oldPath:localMapping.path, newPath:bitrixMapping.path});
           this.fileQueue.push({
             action: ACTION_LOCAL.MOVE_FILE,
-            data: { localFile, file:bitrixMapping, localMapping:mapping}
+            data: { localFile, file:bitrixMapping, localMapping}
           });
         }
       }
@@ -289,6 +296,7 @@ export class SyncService {
               });
             }
             resolve(true);
+            return;
           }
 
           const conflict: DiffContents = {
@@ -341,35 +349,49 @@ export class SyncService {
         });
     }
 
-    syncFolders(localFolders: TFolder[]){
+    async checkLocalFolder(localFolder:TFolder){ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
+      if (localFolder.path === '/') return;
+      // Проверяем, существует ли маппинг для этой папки
+      const moved=this.movedFiles.find(el=>el.newPath===localFolder.path);
+      if (moved){
+        this.fileQueue.push({
+          action:ACTION_BITRIX.MOVE_FOLDER,
+          data:{
+            localFolder,
+            oldPath:moved.oldPath,
+            newPath:moved.newPath
+          }
+        })
+        // this.bitrixController.moveFile(moved.file, moved.oldPath);
+        return;
+      }
+
+      let bitrixMapping = this.bitrixMap.map.find(el=>el.path===localFolder.path);
+      const localMapping= this.mappingManager.mappings.find(el=>el.path===localFolder.path);
+      
+      if (!bitrixMapping&&!localMapping) {
+          this.fileQueue.push({
+            action: ACTION_BITRIX.CREATE_FOLDER,
+            data: { localFolder: localFolder }
+          });
+      }
+      if (localMapping&&!bitrixMapping){
+        bitrixMapping=this.bitrixMap.map.find(el=>el.id===localMapping.id);
+        if (bitrixMapping){//Папка была перемещена в битриксе
+          this.fileQueue.push({
+            action: ACTION_LOCAL.MOVE_FOLDER,
+            data:{localFolder, folder:bitrixMapping, localMapping}
+          })
+        }
+      }
+    }
+
+    async syncFolders(localFolders: TFolder[]){
       const folderMappings = this.mappingManager.mappings.filter(el => el.isFolder);
       const bitrixFolders=this.bitrixMap.map.filter(el=>el.isFolder);
-      const result:{created:number, deleted:number, errors:string[]} = { created: 0, deleted: 0, errors: [] };
 
       for (const localFolder of localFolders) {
-        if (localFolder.path === '/') continue;
-        // Проверяем, существует ли маппинг для этой папки
-        const mapping = bitrixFolders.find(el=>el.path===localFolder.path);
-        const localMap= folderMappings.find(el=>el.path===localFolder.path);
-        
-        if (!mapping&&!localMap) {  //Не существует в мапингах - значит создана в обсидиан. НО ВОЗМОЖНО ПЕРЕМЕЩЕНА. TODO: ПРОВЕРИТЬ
-          const moved=this.movedFiles.find(el=>el.newPath===localFolder.path);
-          if(!moved){
-            this.fileQueue.push({
-              action: ACTION_BITRIX.CREATE_FOLDER,
-              data: { localFolder: localFolder }
-            });
-            result.created++;
-          }
-          else{
-            this.fileQueue.push({
-              action: ACTION_BITRIX.MOVE_FOLDER,
-              data: { localAbstract: moved.file, oldPath: moved.oldPath }
-            });
-            result.created++;
-          }
-          
-        }
+        await this.checkLocalFolder(localFolder);
       }
 
       for (const folderInBitrix of bitrixFolders) {
@@ -387,11 +409,8 @@ export class SyncService {
               action: ACTION_LOCAL.CREATE_FOLDER,
               data: { folder: folderInBitrix }
             });
-            result.created++;
           }
       }
-  
-      return result;
     }
 
 }
