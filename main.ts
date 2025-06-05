@@ -31,7 +31,7 @@ const DEFAULT_SETTINGS: Bitrix24SyncSettings = {
   currentUserId:0,
   refresh_token: "",
   expires_in: 0,
-  syncInterval: 30,
+  syncInterval: 9999999,
   access_token: "",
   lastSync:0
 };
@@ -55,6 +55,7 @@ export default class Bitrix24Sync extends Plugin {
     
     this.registerEvent(
       this.app.vault.on('rename', async (file, oldPath)=>{
+        const currentSync=this.isSyncing;
         this.isSyncing=true;
         try {
           if (file instanceof TFile){
@@ -84,7 +85,7 @@ export default class Bitrix24Sync extends Plugin {
           new Notice('Ошибка выполнения команды перемещения файла: '+error.message);
         }
         finally{
-          this.isSyncing=false;
+          this.isSyncing=currentSync;
         }
       })
     )
@@ -150,7 +151,7 @@ export default class Bitrix24Sync extends Plugin {
   async addPeriodicSync(){
     if (this.isSyncing) return;
     await this.syncWithBitrix();
-    setTimeout(()=>this.addPeriodicSync(), this.settings.syncInterval*1000);
+    setTimeout(()=>this.addPeriodicSync(), this.settings.syncInterval*1000*1000);
   }
 
   async syncWithBitrix(){

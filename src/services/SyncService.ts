@@ -50,8 +50,9 @@ export class SyncService {
 
     public isAwaitMoveByNewPath(newPath:string){
       const inMovedFiles=this.movedFiles.find(el=>el.newPath===newPath)!==undefined;
-      asfasgasgh<asgdsfhsdfgvdgyhfd hsfd g afgha дОТЕЛЫВАТЬ ТУТ. СДЕЛАТЬ ПРОВЕРКУ НАЛИЧИЯ ПУТИ ЕЩЁ И В ОЧЕРЕДИ НА ПЕРЕМЕЩЕНИЕ
-      return ;
+      if (inMovedFiles) return true;
+      const inQueue=this.fileQueue.find(el=>el.data.localFolder?.path===newPath)!==undefined;
+      return inQueue;
     }
 
     public clearMovedFiles(){
@@ -94,7 +95,7 @@ export class SyncService {
         }
       });
 
-      this.syncFolders(obsidianFolders);
+      await this.syncFolders(obsidianFolders);
       await this.syncFiles(obsidianFiles);
       this.movedFiles=[];
       await this.processFileQueue();
@@ -382,6 +383,12 @@ export class SyncService {
             action: ACTION_LOCAL.MOVE_FOLDER,
             data:{localFolder, folder:bitrixMapping, localMapping}
           })
+        }
+        else{// Странный рассинхрон. Но лучше так
+          this.fileQueue.push({
+            action: ACTION_BITRIX.CREATE_FOLDER,
+            data: { localFolder: localFolder }
+          });
         }
       }
     }

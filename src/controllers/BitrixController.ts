@@ -139,23 +139,27 @@ export class BitrixController{
       new Notice('Не могу найти папку по пути '+ folderAbstract.path);
       return;
     }
-    const mapping=this.mappingManager.getMappingByLocalPath(oldPath);
+    let mapping=this.mappingManager.getMappingByLocalPath(oldPath);
     if (!mapping){//Обработка ошибки отсутствия карты
       const bitrixMapping=this.bitrixMap.map.find(el=>el.path===oldPath);
       if (!bitrixMapping){
         await this.createFolder(folder);
+        return;
       }
       else{
-        this.mappingManager.add({
-          id:bitrixMapping.id,
-          path:folder.path,
-          name:folder.name,
-          isFolder:true,
-          lastUpdatBitrix:bitrixMapping.lastUpdate,
-          lastLocalMtime:bitrixMapping.lastUpdate
-        });
+        mapping=this.mappingManager.getById(bitrixMapping.id);
+        if (!mapping){
+          this.mappingManager.add({
+            id:bitrixMapping.id,
+            path:folder.path,
+            name:folder.name,
+            isFolder:true,
+            lastUpdatBitrix:bitrixMapping.lastUpdate,
+            lastLocalMtime:bitrixMapping.lastUpdate
+          });
+          return;
+        }
       }
-      return;
     }
 
     const pathParent=folder.parent?.path||'/';
