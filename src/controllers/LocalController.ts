@@ -5,10 +5,13 @@ import { FileMapping, MappingManager } from "src/models/MappingManager";
 
 export const ACTION={
   CREATE_FILE:'createFileInLocal',
-  UPDATE_FILE:'updateFileInLocal',
   CREATE_FOLDER:'createFolderInLocal',
+
+  UPDATE_FILE:'updateFileInLocal',
+  
   DELETE_FILE:'deleteFileInLocal',
   DELETE_FOLDER:'deleteFolderInLocal',
+
   MOVE_FILE:'moveFileInLocal',
   MOVE_FOLDER:'moveFolderInLocal'
 };
@@ -70,7 +73,6 @@ export class LocalController{
     const mapping=this.mappingManager.getMappingByLocalPath(file.path);
     if (mapping){
       this.mappingManager.set(mapping.id, {
-        lastLocalMtime:bitrixMap.lastUpdate,
         lastUpdatBitrix:bitrixMap.lastUpdate,
       });
     }
@@ -80,7 +82,7 @@ export class LocalController{
         name:bitrixMap.name,
         path:bitrixMap.path,
         isFolder:false,
-        lastLocalMtime:bitrixMap.lastUpdate,
+        lastLocalMtime:file.stat.mtime,
         lastUpdatBitrix:bitrixMap.lastUpdate,
       });
     }
@@ -125,5 +127,19 @@ export class LocalController{
     this.mappingManager.set(localMap?.id, {
       lastLocalMtime:time,
     });
+  }
+
+  public async deleteFolder(folder:TFolder, localMap:FileMapping){
+    await this.vault.trash(folder, false);
+    const idxLocalMap=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
+    if (idxLocalMap===-1) return;
+    this.mappingManager.mappings.splice(idxLocalMap,1);
+  }
+
+  public async deleteFile(file:TFile, localMap:FileMapping){
+    await this.vault.trash(file, false);
+    const idxLocalMap=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
+    if (idxLocalMap===-1) return;
+    this.mappingManager.mappings.splice(idxLocalMap,1);
   }
 }

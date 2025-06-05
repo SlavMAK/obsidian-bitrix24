@@ -48,6 +48,10 @@ export class SyncService {
       this.movedFiles.push({file, oldPath, newPath});
     }
 
+    clearQueue(){
+      this.fileQueue=[];
+    }
+
     public isAwaitMoveByNewPath(newPath:string){
       const inMovedFiles=this.movedFiles.find(el=>el.newPath===newPath)!==undefined;
       if (inMovedFiles) return true;
@@ -83,7 +87,6 @@ export class SyncService {
       this.bitrixMap=bitrixMap;
       this.bitrixController.setBitrixMap(bitrixMap);
       
-      this.fileQueue=[];
       const obsidianFiles:TFile[] = [];
       const obsidianFolders: TFolder[] = [];
 
@@ -99,11 +102,11 @@ export class SyncService {
       await this.syncFiles(obsidianFiles);
       this.movedFiles=[];
       await this.processFileQueue();
-      console.log(this.fileQueue);
     }
 
     async processFileQueue(){
       for (const item of this.fileQueue) {
+        try {
           switch (item.action) {
             //CREATE FOLDER
             case ACTION_LOCAL.CREATE_FOLDER:
@@ -143,10 +146,27 @@ export class SyncService {
             case ACTION_BITRIX.MOVE_FILE:
               await this.bitrixController.moveFile(item.data.localFile as TFile, item.data.oldPath as string);
               break;
+            case ACTION_LOCAL.DELETE_FOLDER:
+              await this.localController.deleteFolder(item.data.localFolder as TFolder, item.data.localMapping as FileMapping);
+              break;
+            case ACTION_LOCAL.DELETE_FILE:
+              await this.localController.deleteFile(item.data.localFile as TFile, item.data.localMapping as FileMapping);
+              break;
+            case ACTION_BITRIX.DELETE_FILE:
+              this.bitrixController.deleteFile(item.data.file as BitrixMapElement, item.data.localMapping as FileMapping);
+              break;
+            case ACTION_BITRIX.DELETE_FOLDER:
+              this.bitrixController.deleteFolder(item.data.folder as BitrixMapElement, item.data.localMapping as FileMapping);
+              break;
             default:
             break;
         }
+        } catch (error) {
+          new Notice('Ошибка обработки очереди: '+error);
+        }
       }
+      console.log(this.fileQueue);
+      this.fileQueue=[];
     }
 
     public async checkLocalFile(localFile:TFile){ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
@@ -221,6 +241,13 @@ export class SyncService {
             data: { localFile, file:bitrixMapping, localMapping}
           });
         }
+        else{
+          console.log('Файл удалён в битриксе.'+localMapping.path);
+          this.fileQueue.push({
+            action: ACTION_LOCAL.DELETE_FILE,
+            data: { localFile, localMapping }
+          });
+        }
       }
       return result
     }
@@ -259,6 +286,13 @@ export class SyncService {
             data: { file: bitrixFile }
           });
           result.deleted++;
+        }
+        else if(!fileLocal&&fileMapping){
+          console.log('Файл удалён в ФС. Удаляем и в битриксе: '+bitrixFile.path);
+          this.fileQueue.push({
+            action: ACTION_BITRIX.DELETE_FILE,
+            data: { file: bitrixFile, localMapping:fileMapping }
+          });
         }
       }
       return result;
@@ -384,11 +418,12 @@ export class SyncService {
             data:{localFolder, folder:bitrixMapping, localMapping}
           })
         }
-        else{// Странный рассинхрон. Но лучше так
+        else{
+          console.log('Папка была удалена в битрикс');
           this.fileQueue.push({
-            action: ACTION_BITRIX.CREATE_FOLDER,
-            data: { localFolder: localFolder }
-          });
+            action: ACTION_LOCAL.DELETE_FOLDER,
+            data:{localFolder, localMapping}
+          })
         }
       }
     }
@@ -415,6 +450,13 @@ export class SyncService {
             this.fileQueue.push({
               action: ACTION_LOCAL.CREATE_FOLDER,
               data: { folder: folderInBitrix }
+            });
+          }
+          else if(!folderExists&&folderMapping){
+            console.log('Папка удалена в ФС, удаляем и в Битрикс - '+folderInBitrix.path);
+            this.fileQueue.push({
+              action: ACTION_BITRIX.DELETE_FOLDER,
+              data: { folder: folderInBitrix, localMapping:folderMapping }
             });
           }
       }

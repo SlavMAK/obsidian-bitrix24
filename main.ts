@@ -67,17 +67,16 @@ export default class Bitrix24Sync extends Plugin {
             if (!localFile) throw new Error('Не удалось получить файл по пути '+file.path);
             this.syncService.addMoveFile(file, oldPath, file.path);
             await this.syncService.checkLocalFile(localFile);
-            this.syncService.clearMovedFiles();
-            await this.syncService.processFileQueue();
           }
           if (file instanceof TFolder){
             const localFolder=await this.app.vault.getFolderByPath(file.path);
             if (!localFolder) throw new Error('Не удалось получить папку по пути '+file.path);
             this.syncService.addMoveFile(file, oldPath, file.path);
             await this.syncService.checkLocalFolder(localFolder);
-            this.syncService.clearMovedFiles();
-            await this.syncService.processFileQueue();
           }
+          this.syncService.clearMovedFiles();
+          await this.syncService.processFileQueue();
+          this.syncService.clearQueue();
           this.settings.lastSync=new Date().getTime();
           this.settings.mappings=this.mappingManager.toJSON();
           await this.saveSettings();

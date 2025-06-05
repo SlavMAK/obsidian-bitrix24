@@ -1,7 +1,7 @@
 import { Notice, TAbstractFile, TFile, TFolder, Vault } from "obsidian";
 import { Bitrix24Api } from "src/api/bitrix24-api";
 import { BitrixMap, BitrixMapElement } from "src/models/BitrixMap";
-import { MappingManager } from "src/models/MappingManager";
+import { FileMapping, MappingManager } from "src/models/MappingManager";
 
 export const ACTION={
   CREATE_FILE:'createFileInBitrix',
@@ -63,7 +63,7 @@ export class BitrixController{
       data: {
           NAME: file.name
       },
-      fileContent:[file.name, base64File]
+      fileContent:[file.name, base64File||'IA==']
     });
     if (!result.error){
       this.mappingManager.add({
@@ -75,6 +75,26 @@ export class BitrixController{
         lastLocalMtime: file.stat.ctime
       })
     }
+  }
+
+  async deleteFile(bitrixMap:BitrixMapElement, localMap:FileMapping){
+    const result=await this.bitrixApi.callMethod('disk.file.markdeleted', {id:bitrixMap.id});
+    if (result.error()){
+      new Notice('Ошибка удаления из битрикс файла  '+bitrixMap.path+' '+result.error());
+      return;
+    }
+    const mappingIdx=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
+    this.mappingManager.mappings.splice(mappingIdx,1);
+  }
+
+  async deleteFolder(bitrixMap:BitrixMapElement, localMap:FileMapping){
+    const result=await this.bitrixApi.callMethod('disk.folder.markdeleted', {id:bitrixMap.id});
+    if (result.error()){
+      new Notice('Ошибка удаления из битрикс папки  '+bitrixMap.path+' '+result.error());
+      return;
+    }
+    const mappingIdx=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
+    this.mappingManager.mappings.splice(mappingIdx,1);
   }
 
   async updateFile(file:TFile, bitrixMap:BitrixMapElement){
@@ -155,7 +175,7 @@ export class BitrixController{
             name:folder.name,
             isFolder:true,
             lastUpdatBitrix:bitrixMapping.lastUpdate,
-            lastLocalMtime:bitrixMapping.lastUpdate
+            lastLocalMtime:new Date().getTime()
           });
           return;
         }
@@ -211,7 +231,7 @@ export class BitrixController{
           name:file.name,
           isFolder:false,
           lastUpdatBitrix:bitrixMapping.lastUpdate,
-          lastLocalMtime:bitrixMapping.lastUpdate
+          lastLocalMtime:file.stat.mtime
           });
       }
       return;
