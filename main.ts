@@ -20,20 +20,26 @@ interface Bitrix24SyncSettings {
   expires_in: number;
   syncInterval: number;
   access_token: string;
+  currentUserName:string,
   mappings:string;
   lastSync:number;
   currentUserId:number;
+  storageId:number;
+  folderId:number;
 }
 
 const DEFAULT_SETTINGS: Bitrix24SyncSettings = {
   mappings:'[]',
   client_endpoint: "",
   currentUserId:0,
+  currentUserName:'',
   refresh_token: "",
   expires_in: 0,
-  syncInterval: 9999999,
+  syncInterval: 30,
   access_token: "",
-  lastSync:0
+  lastSync:0,
+  storageId:0,
+  folderId:0
 };
 
 export default class Bitrix24Sync extends Plugin {
@@ -150,7 +156,7 @@ export default class Bitrix24Sync extends Plugin {
   async addPeriodicSync(){
     if (this.isSyncing) return;
     await this.syncWithBitrix();
-    setTimeout(()=>this.addPeriodicSync(), this.settings.syncInterval*1000*1000);
+    setTimeout(()=>this.addPeriodicSync(), this.settings.syncInterval*1000*60);
   }
 
   async syncWithBitrix(){
@@ -166,8 +172,12 @@ export default class Bitrix24Sync extends Plugin {
 
     this.isSyncing = true;
 
+    if (!this.settings.folderId){
+      return;
+    }
+
     try {
-      const folderId='19477'; //TODO брать из настроек
+      const folderId=String(this.settings.folderId)
       this.mappingManager.add({
         id:folderId,
         path:'/',
