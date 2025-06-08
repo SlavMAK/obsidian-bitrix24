@@ -15,7 +15,7 @@ export class SyncService {
     private bitrixApi: Bitrix24Api;
     private mappingManager: MappingManager;
     private vault: Vault;
-    private fileQueue: { action: string, data: {
+    public fileQueue: { action: string, data: {
       folder?:BitrixMapElement,
       localFolder?:TFolder,
       localFile?:TFile,
@@ -169,9 +169,9 @@ export class SyncService {
       this.fileQueue=[];
     }
 
-    public async checkLocalFile(localFile:TFile){ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
+    public async checkLocalFile(localFile:TFile, localMapping?:FileMapping, bitrixMapping?:BitrixMapElement):Promise<string[]>{ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
       const moved=this.movedFiles.find(el=>el.newPath===localFile.path);
-      const result:{created:number, deleted:number, errors:string[], changedFiles:string[]} = { created: 0, deleted: 0, errors: [], changedFiles:[] };
+      const changedFiles:string[]=[];
       if (moved){
         this.fileQueue.push({
           action:ACTION_BITRIX.MOVE_FILE,
@@ -182,11 +182,8 @@ export class SyncService {
           }
         })
         // this.bitrixController.moveFile(moved.file, moved.oldPath);
-        return result;
+        return changedFiles;
       }
-      const localMapping = this.mappingManager.getMappingByLocalPath(localFile.path);
-      let bitrixMapping = this.bitrixMap.map.find(el=>el.path===localFile.path);
-      // const mtime=localFile.stat.mtime; //Нужно для сравнения и обновления
 
       if (!bitrixMapping&&!localMapping) {
         // Файл не существует в Битрикс.Диск, добавляем в очередь на создание
@@ -194,15 +191,14 @@ export class SyncService {
           action: ACTION_BITRIX.CREATE_FILE,
           data: { localFile: localFile }
         });
-        result.created++;
       }
       else if(!localMapping&&bitrixMapping){
-        console.log('!mapping && bitrixMapping');
+        console.log('!mapping && bitrixMapping:'+localFile.path);
         await this.resolveConflict(localFile, bitrixMapping);
         console.log('resolved');
       }
       else if(bitrixMapping&&localMapping){
-        result.changedFiles.push(bitrixMapping.id);
+        changedFiles.push(bitrixMapping.id);
         if (
           localMapping.lastLocalMtime<localFile.stat.mtime //Обновление файла в ФС было позже чем в мапинге
           &&localMapping.lastUpdatBitrix>=bitrixMapping.lastUpdate //Обновление файла в битриксе не было
@@ -227,7 +223,7 @@ export class SyncService {
           localMapping.lastLocalMtime<localFile.stat.mtime
           &&localMapping.lastUpdatBitrix<bitrixMapping.lastUpdate
         ){
-          console.log('!mapping && bitrixMapping');
+          console.log('localMapping.lastLocalMtime<localFile.stat.mtime&&!mapping && bitrixMapping', localFile.path);
           await this.resolveConflict(localFile, bitrixMapping);
           console.log('resolved');
         }
@@ -249,7 +245,31 @@ export class SyncService {
           });
         }
       }
-      return result
+      return changedFiles;
+    }
+
+    checkBitrixFile(bitrixFile:BitrixMapElement, localMap?:FileMapping, fileLocal?:TFile){
+        const moved=this.movedFiles.find(el=>el.newPath===bitrixFile.path);
+        if (moved) {
+          console.log('Пропустил так как перемещён (bitrixFile.path)', bitrixFile.path);
+          return;
+        }
+
+        if (!fileLocal&&!localMap) {
+          // Файл существует только в Битрикс.Диск, удаляем
+          this.fileQueue.push({
+            action: ACTION_LOCAL.CREATE_FILE,
+            data: { file: bitrixFile }
+          });
+        }
+        else if(!fileLocal&&localMap){
+          console.log('Файл удалён в ФС. Удаляем и в битриксе: '+bitrixFile.path);
+          this.fileQueue.push({
+            action: ACTION_BITRIX.DELETE_FILE,
+            data: { file: bitrixFile, localMapping:localMap }
+          });
+        }
+
     }
 
 
@@ -261,39 +281,17 @@ export class SyncService {
       const changedFiles:string[]=[];
 
       for (const localFile of localFiles) {
-        const tempResult=await this.checkLocalFile(localFile);
-        result.created+=tempResult.created;
-        result.deleted+=tempResult.deleted;
-        result.errors.push(...tempResult.errors);
-        changedFiles.push(...tempResult.changedFiles);
+        const localMapping = filesMappings.find(el=>el.path===localFile.path);
+        const bitrixMap=bitrixFiles.find(el=>el.path===localMapping?.path);
+        const changedFiles=await this.checkLocalFile(localFile, localMapping, bitrixMap);
+        changedFiles.push(...changedFiles);
       }
 
       for (const bitrixFile of bitrixFiles) {
         if (changedFiles.includes(bitrixFile.id)) continue;
-        const moved=this.movedFiles.find(el=>el.newPath===bitrixFile.path);
-        if (moved) {
-          console.log('Пропустил так как перемещён (bitrixFile.path)', bitrixFile.path);
-          continue;
-        }
-
-        const fileLocal=this.vault.getAbstractFileByPath(bitrixFile.path) as TFile;
-        const fileMapping=filesMappings.find(el=>el.id===bitrixFile.id);
-
-        if (!fileLocal&&!fileMapping) {
-          // Файл существует только в Битрикс.Диск, удаляем
-          this.fileQueue.push({
-            action: ACTION_LOCAL.CREATE_FILE,
-            data: { file: bitrixFile }
-          });
-          result.deleted++;
-        }
-        else if(!fileLocal&&fileMapping){
-          console.log('Файл удалён в ФС. Удаляем и в битриксе: '+bitrixFile.path);
-          this.fileQueue.push({
-            action: ACTION_BITRIX.DELETE_FILE,
-            data: { file: bitrixFile, localMapping:fileMapping }
-          });
-        }
+        const localMap=filesMappings.find(el=>el.path===bitrixFile.path);
+        const localFile=localFiles.find(el=>el.path===localMap?.path);
+        this.checkBitrixFile(bitrixFile, localMap, localFile);
       }
       return result;
     }
@@ -384,7 +382,7 @@ export class SyncService {
         });
     }
 
-    async checkLocalFolder(localFolder:TFolder){ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
+    async checkLocalFolder(localFolder:TFolder, bitrixMapping?:BitrixMapElement, localMapping?:FileMapping){ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
       if (localFolder.path === '/') return;
       // Проверяем, существует ли маппинг для этой папки
       const moved=this.movedFiles.find(el=>el.newPath===localFolder.path);
@@ -401,9 +399,6 @@ export class SyncService {
         return;
       }
 
-      let bitrixMapping = this.bitrixMap.map.find(el=>el.path===localFolder.path);
-      const localMapping= this.mappingManager.mappings.find(el=>el.path===localFolder.path);
-      
       if (!bitrixMapping&&!localMapping) {
           this.fileQueue.push({
             action: ACTION_BITRIX.CREATE_FOLDER,
@@ -428,37 +423,44 @@ export class SyncService {
       }
     }
 
+    checkBitrixFolder(folderInBitrix:BitrixMapElement, folderMapping?:FileMapping, localFolder?:TFolder){
+      const moved=this.movedFiles.find(el=>el.oldPath===folderInBitrix.path);
+      if (moved){
+        console.log('Пропустил ', moved.newPath, moved.oldPath);
+        return;
+      }
+      
+      if(!localFolder&&!folderMapping){
+        this.fileQueue.push({
+          action: ACTION_LOCAL.CREATE_FOLDER,
+          data: { folder: folderInBitrix }
+        });
+      }
+      else if(!localFolder&&folderMapping){
+        console.log('Папка удалена в ФС, удаляем и в Битрикс - '+folderInBitrix.path);
+        this.fileQueue.push({
+          action: ACTION_BITRIX.DELETE_FOLDER,
+          data: { folder: folderInBitrix, localMapping:folderMapping }
+        });
+      }
+    }
+
     async syncFolders(localFolders: TFolder[]){
       const folderMappings = this.mappingManager.mappings.filter(el => el.isFolder);
       const bitrixFolders=this.bitrixMap.map.filter(el=>el.isFolder);
 
       for (const localFolder of localFolders) {
-        await this.checkLocalFolder(localFolder);
+        const folderMap=folderMappings.find(el=>el.path===localFolder.path);
+        const bitrixMap=bitrixFolders.find(el=>el.path===localFolder.path);
+        await this.checkLocalFolder(localFolder, bitrixMap, folderMap);
       }
 
       for (const folderInBitrix of bitrixFolders) {
           // Проверяем, существует ли папка локально
-          const folderExists = localFolders.some(f => f.path === folderInBitrix.path);
-          const folderMapping = folderMappings.find(el=>el.id===folderInBitrix.id);
-          const moved=this.movedFiles.find(el=>el.oldPath===folderInBitrix.path);
-          if (moved){
-            console.log('Пропустил ', moved.newPath, moved.oldPath);
-            continue;
-          }
+          const folderMap=folderMappings.find(el=>el.path===folderInBitrix.path);
+          const localFolder=localFolders.find(el=>el.path===folderInBitrix.path);
+          this.checkBitrixFolder(folderInBitrix, folderMap, localFolder);
           
-          if(!folderExists&&!folderMapping){
-            this.fileQueue.push({
-              action: ACTION_LOCAL.CREATE_FOLDER,
-              data: { folder: folderInBitrix }
-            });
-          }
-          else if(!folderExists&&folderMapping){
-            console.log('Папка удалена в ФС, удаляем и в Битрикс - '+folderInBitrix.path);
-            this.fileQueue.push({
-              action: ACTION_BITRIX.DELETE_FOLDER,
-              data: { folder: folderInBitrix, localMapping:folderMapping }
-            });
-          }
       }
     }
 

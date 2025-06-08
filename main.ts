@@ -1,10 +1,9 @@
 import {
   Notice,
   Plugin,
-  TFile,
-  TFolder,
 } from "obsidian";
 import { Bitrix24Api } from "src/api/bitrix24-api";
+import { LocalEventController } from "src/controllers/LocalEventController";
 import { BitrixMap } from "src/models/BitrixMap";
 import { MappingManager } from "src/models/MappingManager";
 import { SyncService } from "src/services/SyncService";
@@ -48,6 +47,7 @@ export default class Bitrix24Sync extends Plugin {
   syncService: SyncService;
   bitrix24Api: Bitrix24Api;
   mappingManager:MappingManager
+  localEventController:LocalEventController;
 
   async onload() {
     await this.loadSettings();
@@ -59,30 +59,18 @@ export default class Bitrix24Sync extends Plugin {
     this.addSettingTab(settingsTab);
     this.addCommands();
     
+    
+    this.registerEvents();
+    this.addPeriodicSync();
+  }
+
+  registerEvents(){
     this.registerEvent(
       this.app.vault.on('rename', async (file, oldPath)=>{
         const currentSync=this.isSyncing;
         this.isSyncing=true;
         try {
-          if (file instanceof TFile){
-            if (this.syncService.isAwaitMoveByNewPath(file.parent?.path||'')){
-              console.log('Не обрабатываем перемещение файла, так как сейчас перемещается его родитель - ', file.path);
-              return;
-            }
-            const localFile=await this.app.vault.getFileByPath(file.path);
-            if (!localFile) throw new Error('Не удалось получить файл по пути '+file.path);
-            this.syncService.addMoveFile(file, oldPath, file.path);
-            await this.syncService.checkLocalFile(localFile);
-          }
-          if (file instanceof TFolder){
-            const localFolder=await this.app.vault.getFolderByPath(file.path);
-            if (!localFolder) throw new Error('Не удалось получить папку по пути '+file.path);
-            this.syncService.addMoveFile(file, oldPath, file.path);
-            await this.syncService.checkLocalFolder(localFolder);
-          }
-          this.syncService.clearMovedFiles();
-          await this.syncService.processFileQueue();
-          this.syncService.clearQueue();
+          await this.localEventController.onMove(file, oldPath);
           this.settings.lastSync=new Date().getTime();
           this.settings.mappings=this.mappingManager.toJSON();
           await this.saveSettings();
@@ -94,7 +82,46 @@ export default class Bitrix24Sync extends Plugin {
         }
       })
     )
-    this.addPeriodicSync();
+    this.registerEvent(
+      this.app.vault.on('modify', async (file)=>{
+        try {
+          this.localEventController.onUpdate(file);
+          this.settings.lastSync=new Date().getTime();
+          this.settings.mappings=this.mappingManager.toJSON();
+          await this.saveSettings();
+        } catch (error) {
+          new Notice('Ошибка выполнения обновления файла: '+error.message);
+        }
+      })
+    )
+
+    this.registerEvent(
+      this.app.vault.on('delete', async (file)=>{
+        console.log('Обнаружено удаление файла: '+file.path);
+        try {
+          this.localEventController.onDelete(file);
+          this.settings.lastSync=new Date().getTime();
+          this.settings.mappings=this.mappingManager.toJSON();
+          await this.saveSettings();
+        } catch (error) {
+          new Notice('Ошибка выполнения удаления файла: '+error.message);
+        }
+      })
+    )
+
+    this.registerEvent(
+      this.app.vault.on('create', async (file)=>{
+        console.log('Обнаружено создание файла: '+file.path);
+        // try {
+        //   this.localEventController.onCreate(file);
+        //   this.settings.lastSync=new Date().getTime();
+        //   this.settings.mappings=this.mappingManager.toJSON();
+        //   await this.saveSettings();
+        // } catch (error) {
+        //   new Notice('Ошибка выполнения создания файла: '+error.message);
+        // }
+      })
+    )
   }
 
   onunload() {
@@ -136,6 +163,8 @@ export default class Bitrix24Sync extends Plugin {
       // Number(this.settings.lastSync)||0
       0
     );
+
+    this.localEventController=new LocalEventController(this.syncService, this.app, this.mappingManager, this.bitrix24Api);
   }
 
   addCommands() {
@@ -166,13 +195,15 @@ export default class Bitrix24Sync extends Plugin {
     }
 
     if (this.isSyncing) {
-      new Notice('Sync is already in progress');
+      new Notice('Синхронизация уже выполняется');
       return;
     }
 
     this.isSyncing = true;
 
     if (!this.settings.folderId){
+      new Notice('Укажите папку синхронизации в настройках');
+      this.isSyncing=false;
       return;
     }
 

@@ -34,6 +34,7 @@ export class MappingManager {
       currentMap.isFolder=fileMapping.isFolder!==undefined?fileMapping.isFolder:currentMap.isFolder;
     }
     else{
+      fileMapping.id=String(fileMapping.id);
       this.mappings.push(fileMapping);
     }
   }
@@ -46,11 +47,11 @@ export class MappingManager {
   }
 
   public getMappingByLocalPath(path: string): FileMapping | undefined {
-    return this.mappings.find(el=>el.path===path);
+    return this.mappings.find(el=>el?.path===path);
   }
 
   public getById(id:string){
-    return this.mappings.find(el=>el.id===id);
+    return this.mappings.find(el=>String(el.id)===String(id));
   }
 
   public updateMappingAfterMoveFolder(oldFolderPath:string, newPath:string){
@@ -65,7 +66,7 @@ export class MappingManager {
   // Десериализация данных после загрузки
   static fromJSON(vault: Vault, json: string): MappingManager {
     try {
-      const mappings = JSON.parse(json) as FileMapping[];
+      const mappings = (JSON.parse(json) as FileMapping[]).filter(el=>!!el);
       return new MappingManager(mappings);
     } catch (e) {
       console.error('Error parsing mapping data:', e);

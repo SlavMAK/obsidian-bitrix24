@@ -73,6 +73,7 @@ export class LocalController{
     const mapping=this.mappingManager.getMappingByLocalPath(file.path);
     if (mapping){
       this.mappingManager.set(mapping.id, {
+        lastLocalMtime:file.stat.mtime,
         lastUpdatBitrix:bitrixMap.lastUpdate,
       });
     }

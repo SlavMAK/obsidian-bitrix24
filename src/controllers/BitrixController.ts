@@ -65,7 +65,10 @@ export class BitrixController{
       },
       fileContent:[file.name, base64File||'IA==']
     });
-    if (!result.error){
+    if (result.error()){
+      new Notice('Ошибка при создании файла '+result.error());
+    }
+    else {
       this.mappingManager.add({
         id:result.data().ID,
         path:file.path,
@@ -220,7 +223,7 @@ export class BitrixController{
     }
     const mapping=this.mappingManager.getMappingByLocalPath(oldPath);
     if (!mapping){//Обработка ошибки отсутствия карты
-      const bitrixMapping=this.bitrixMap.map.find(el=>el.path===oldPath);
+      const bitrixMapping=(this?.bitrixMap?.map||[]).find(el=>el.path===oldPath);
       if (!bitrixMapping){
         await this.createFile(file);
       }
