@@ -1,4 +1,4 @@
-import { request } from "obsidian";
+import { Notice, request } from "obsidian";
 import { BitrixAuthType } from "src/types/bitrixAuthType";
 import { CallResult } from "./callResult";
 import { batchCmdElement } from "src/types/batchElement";
@@ -19,6 +19,7 @@ export class Bitrix24Api {
     clientEndpoint:string;
     clientId:string;
     clientSecret:string;
+    webSocketClient:WebSocket|undefined;
 
     
     constructor(auth:BitrixAuthType){
@@ -227,5 +228,34 @@ export class Bitrix24Api {
         } catch (error) {
             console.error('Error fetching token from oauth.bitrix.info:', error);
         }
+    }
+
+    async getWebSocketClient(){
+      try {
+        const result=await this.callMethod('pull.application.config.get', {});
+        if (result.error()){
+          new Notice(`Ошибка получения конфигурации websocket от Bitrix24: ${result.error_description()}`);
+          return;
+        }
+        const sharedChanel=result.data()?.channels?.shared;
+        const server=result.data()?.server;
+        if (!sharedChanel||!server){
+          new Notice(`Ошибка получения конфигурации websocket от Bitrix24: ${JSON.stringify(result.data())}`);
+          return;
+        }
+        let urlConnection=`${server.websocket_secure}?CHANNEL_ID=${sharedChanel.id}`;
+        if (server?.clientId){
+          urlConnection+=`&clientId=${server.clientId}`;
+        }
+        this.webSocketClient = new WebSocket(urlConnection);
+        this.webSocketClient.onopen = function(e) {
+          console.log("[open] Соединение установлено");
+        };
+
+        return this.webSocketClient;
+      } catch (error) {
+        new Notice(`Ошибка получения конфигурации websocket от Bitrix24: ${String(error)}`);
+      }
+      
     }
 }
