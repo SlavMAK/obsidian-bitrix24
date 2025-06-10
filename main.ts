@@ -142,15 +142,37 @@ export default class Bitrix24Sync extends Plugin {
 
   initializeComponents() {
     // Инициализация API клиента
-    this.bitrix24Api = new Bitrix24Api({
-      client_id: clientId,
-      client_secret: clientSecret,
-      access_token: this.settings.access_token,
-      refresh_token: this.settings.refresh_token,
-      client_endpoint: this.settings.client_endpoint,
-      expires_in: this.settings.expires_in
-    });
+    console.log(new Date(this.settings.expires_in));
+    if (!this.bitrix24Api){
+      this.bitrix24Api = new Bitrix24Api({
+        client_id: clientId,
+        client_secret: clientSecret,
+        access_token: this.settings.access_token,
+        refresh_token: this.settings.refresh_token,
+        client_endpoint: this.settings.client_endpoint,
+        expires_in: this.settings.expires_in
+      });
+    }
+    else{
+      this.bitrix24Api.refreshToken=this.settings.refresh_token;
+      this.bitrix24Api.accessToken=this.settings.access_token;
+      this.bitrix24Api.clientEndpoint=this.settings.client_endpoint;
+      this.bitrix24Api.expiresIn=this.settings.expires_in;
+    }
     
+    this.bitrix24Api.getWebSocketClient().then(result=>{
+      if (!result) return;
+      result.onmessage=(event)=>{
+        const dataRaw=(event?.data||'').replace(/#!NGINXNMS!#(.*)#!NGINXNME!#/, '$1');
+        try {
+          const data=JSON.parse(dataRaw);
+          console.log(data);
+        } catch (error) {
+          console.log('Неверный формат полученного по вебсокету сообщения', event);
+        }
+      };
+    });
+
     // Инициализация сервиса маппинга
     this.mappingManager = MappingManager.fromJSON(this.app.vault, this.settings.mappings);
     

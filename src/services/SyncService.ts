@@ -74,7 +74,7 @@ export class SyncService {
         this.vault = vault;
         this.mappingManager = mappingManager
         this.lastSync=lastSync;
-        this.localController=new LocalController(vault, mappingManager);
+        this.localController=new LocalController(vault, mappingManager, bitrixApi);
         this.bitrixController=new BitrixController(mappingManager,  bitrixApi, vault);
     }
 

@@ -1,6 +1,7 @@
 import { Notice, TFile, TFolder, Vault } from "obsidian";
+import { Bitrix24Api } from "src/api/bitrix24-api";
 import { universalDownloadFile } from "src/helpers/universalDownloadFile";
-import { BitrixMapElement } from "src/models/BitrixMap";
+import { BitrixMap, BitrixMapElement } from "src/models/BitrixMap";
 import { FileMapping, MappingManager } from "src/models/MappingManager";
 
 export const ACTION={
@@ -21,7 +22,14 @@ export class LocalController{
   constructor(
     private vault:Vault,
     private mappingManager:MappingManager,
+    private bitrixApi:Bitrix24Api
   ){}
+
+
+  async parseEventWebSocket(event:{command:string, params:any}){
+    const bitrixFileId=event.params.fileId;
+    const bitrixMap=(new BitrixMap(this.bitrixApi)).getMap()
+  }
 
   public async createFolder(folder:BitrixMapElement){
     if (!(await this.vault.adapter.exists(folder.path))){
