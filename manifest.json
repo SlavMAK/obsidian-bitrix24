@@ -1,7 +1,7 @@
 {
 	"id": "bitrix24-sync",
 	"name": "Bitrix24Sync",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "0.15.0",
 	"description": "Сихинхронизация с битрикс24 Диском.",
 	"author": "DC",
