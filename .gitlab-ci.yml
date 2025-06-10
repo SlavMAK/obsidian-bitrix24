@@ -15,6 +15,7 @@ sync_to_github: #Так как остаётся репозиторий клие�
     - git config --global user.name "GitLab Sync Bot"
     - git config --global user.email "gitlab-sync@example.com"
     - echo "https://$GITHUB_TOKEN@github.com/$GITHUB_REPO.git"
+    - git remote remote github
     - git remote add github https://$GITHUB_TOKEN@github.com/$GITHUB_REPO.git
     - git push github HEAD:$TARGET_BRANCH
   rules:
