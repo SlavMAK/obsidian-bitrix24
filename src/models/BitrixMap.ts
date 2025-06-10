@@ -118,7 +118,7 @@ export class BitrixMap{
     }
   }
 
-  async getFolderByMapPath(id:string, mapping:FileMapping[]):Promise<BitrixMapElement|undefined>{
+  async getFolderByMapId(id:string, mapping:FileMapping[]):Promise<BitrixMapElement|undefined>{
     const res=await this.bitrixApi.callMethod('disk.folder.get', {id});
     if (res.error()) return undefined;
     const parent=mapping.find(el=>el.id===res.data().PARENT_ID);

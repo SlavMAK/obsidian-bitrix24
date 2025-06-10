@@ -20,7 +20,8 @@ export class BitrixController{
   constructor(
     private mappingManager:MappingManager,
     private bitrixApi:Bitrix24Api,
-    private vault:Vault
+    private vault:Vault,
+    private clientWebSocketId:string
   ){}
 
   setBitrixMap(map:BitrixMap){
@@ -33,19 +34,30 @@ export class BitrixController{
       console.log('Не нашёл родителя для папки ', folder.path);
       return;
     }
-    const result=await this.bitrixApi.callMethod('disk.folder.addsubfolder', {
-      id:parent.id,
-      data:{
-        NAME:folder?.name||''
-      }
+    const result=await this.bitrixApi.callBatch({
+      createFolder:['disk.folder.addsubfolder', {
+        id:parent.id,
+        data:{
+          NAME:folder?.name||''
+        }
+      }],
+      sendEvent:['pull.application.event.add', {
+        COMMAND:'FOLDER_CREATE',
+        PARAMS:JSON.stringify({
+          fileId:parent.id,
+          path:parent.path,
+          client:this.clientWebSocketId
+        })
+      }]
     });
-    if (!result.error()){
+    
+    if (!result.createFolder.error()){
       this.mappingManager.add({
-        id:result.data().ID,
+        id:result.createFolder.data().ID,
         path:folder.path,
         name:folder.name,
         isFolder:true,
-        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
+        lastUpdatBitrix:new Date(result.createFolder.data().UPDATE_TIME).getTime(),
         lastLocalMtime:new Date().getTime()
       });
     }
@@ -58,32 +70,54 @@ export class BitrixController{
       console.log('Не нашёл родителя для папки ', file.path||'');
       return
     }
-    const result=await this.bitrixApi.callMethod('disk.folder.uploadfile', {
-      id:parent.id,
-      data: {
-          NAME: file.name
-      },
-      fileContent:[file.name, base64File||'IA==']
+    const result=await this.bitrixApi.callBatch({
+      createFile:['disk.folder.uploadfile', {
+        id:parent.id,
+        data: {
+            NAME: file.name
+        },
+        fileContent:[file.name, base64File||'IA==']
+      }],
+      sendEvent:['pull.application.event.add', {
+        COMMAND:'FILE_CREATE',
+        PARAMS:JSON.stringify({
+          fileId:'$result[createFile][ID]',
+          path:file.path,
+          client:this.clientWebSocketId
+        })
+      }]
     });
-    if (result.error()){
-      new Notice('Ошибка при создании файла '+result.error());
+    
+    if (result.createFile.error()){
+      new Notice('Ошибка при создании файла '+result.createFile.error());
     }
     else {
       this.mappingManager.add({
-        id:result.data().ID,
+        id:result.createFile.data().ID,
         path:file.path,
         name:file.name,
         isFolder:false,
-        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
+        lastUpdatBitrix:new Date(result.createFile.data().UPDATE_TIME).getTime(),
         lastLocalMtime: file.stat.ctime
       })
     }
   }
 
   async deleteFile(bitrixMap:BitrixMapElement, localMap:FileMapping){
-    const result=await this.bitrixApi.callMethod('disk.file.markdeleted', {id:bitrixMap.id});
-    if (result.error()){
-      new Notice('Ошибка удаления из битрикс файла  '+bitrixMap.path+' '+result.error());
+    const result=await this.bitrixApi.callBatch({
+      removeFile:['disk.file.markdeleted', {id:bitrixMap.id}],
+      sendEvent:['pull.application.event.add', {
+        COMMAND:'FILE_DELETE',
+        PARAMS:JSON.stringify({
+          fileId:bitrixMap.id,
+          path:bitrixMap.path,
+          client:this.clientWebSocketId
+        })
+      }]
+    });
+    
+    if (result.removeFile.error()){
+      new Notice('Ошибка удаления из битрикс файла  '+bitrixMap.path+' '+result.removeFile.error());
       return;
     }
     const mappingIdx=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
@@ -91,9 +125,20 @@ export class BitrixController{
   }
 
   async deleteFolder(bitrixMap:BitrixMapElement, localMap:FileMapping){
-    const result=await this.bitrixApi.callMethod('disk.folder.markdeleted', {id:bitrixMap.id});
-    if (result.error()){
-      new Notice('Ошибка удаления из битрикс папки  '+bitrixMap.path+' '+result.error());
+    const result=await this.bitrixApi.callBatch({
+      deleteFolder:['disk.folder.markdeleted', {id:bitrixMap.id}],
+      sendEvent:['pull.application.event.add', {
+        COMMAND:'FOLDER_DELETE',
+        PARAMS:JSON.stringify({
+          fileId:bitrixMap.id,
+          path:bitrixMap.path,
+          client:this.clientWebSocketId
+        })
+      }]
+    });
+    
+    if (result.deleteFolder.error()){
+      new Notice('Ошибка удаления из битрикс папки  '+bitrixMap.path+' '+result.deleteFolder.error());
       return;
     }
     const mappingIdx=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
@@ -107,25 +152,36 @@ export class BitrixController{
       return;
     }
     const base64File=await this.getFileAsBase64(this.vault, findedFile);
-    const result=await this.bitrixApi.callMethod('disk.file.uploadversion', {id:bitrixMap.id, fileContent:[bitrixMap.name, base64File]});
-    if (result.error()){
-      new Notice('Ошибка при обработке файла '+result.error());
+    const result=await this.bitrixApi.callBatch({
+      updateFile:['disk.file.uploadversion', {id:bitrixMap.id, fileContent:[bitrixMap.name, base64File]}],
+      sendEvent:['pull.application.event.add', {
+        COMMAND:'FILE_UPDATE',
+        PARAMS:JSON.stringify({
+          fileId:bitrixMap.id,
+          path:file.path,
+          client:this.clientWebSocketId
+        })
+      }]
+    });
+
+    if (result.updateFile.error()){
+      new Notice('Ошибка при обработке файла '+result.updateFile.error());
       return;
     }
     const mapping=this.mappingManager.getById(bitrixMap.id);
     if (mapping){
       this.mappingManager.set(bitrixMap.id, {
         lastLocalMtime:file.stat.mtime,
-        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
+        lastUpdatBitrix:new Date(result.updateFile.data().UPDATE_TIME).getTime(),
       });
     }
     else{
       this.mappingManager.add({
-        id:result.data().ID,
+        id:result.updateFile.data().ID,
         path:file.path,
         name:file.name,
         isFolder:false,
-        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
+        lastUpdatBitrix:new Date(result.updateFile.data().UPDATE_TIME).getTime(),
         lastLocalMtime:file.stat.mtime
       });
     }
@@ -133,24 +189,35 @@ export class BitrixController{
 
   async updateFileByContent(file:BitrixMapElement, content:string){
     const base64File=this.arrayBufferToBase64(new TextEncoder().encode(content));
-    const result=await this.bitrixApi.callMethod('disk.file.uploadversion', {id:file.id, fileContent:[file.name, base64File]});
-    if (result.error()){
-      new Notice('Ошибка при обработке файла '+result.error());
+    const result=await this.bitrixApi.callBatch({
+      updateFile:['disk.file.uploadversion', {id:file.id, fileContent:[file.name, base64File]}],
+      sendEvent:['pull.application.event.add', {
+        COMMAND:'FILE_UPDATE',
+        PARAMS:JSON.stringify({
+          fileId:file.id,
+          path:file.path,
+          client:this.clientWebSocketId
+        })
+      }]
+    });
+    
+    if (result.updateFile.error()){
+      new Notice('Ошибка при обработке файла '+result.updateFile.error());
       return;
     }
     const mapping=this.mappingManager.getById(file.id);
     if (mapping){
       this.mappingManager.set(file.id, {
-        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime()
+        lastUpdatBitrix:new Date(result.updateFile.data().UPDATE_TIME).getTime()
       });
     }
     else{
       this.mappingManager.add({
-        id:result.data().ID,
+        id:result.updateFile.data().ID,
         path:file.path,
         name:file.name,
         isFolder:false,
-        lastUpdatBitrix:new Date(result.data().UPDATE_TIME).getTime(),
+        lastUpdatBitrix:new Date(result.updateFile.data().UPDATE_TIME).getTime(),
         lastLocalMtime:new Date().getTime()
       });
     }

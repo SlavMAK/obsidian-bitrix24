@@ -30,6 +30,7 @@ export class SyncService {
     private lastSync=0;
 
     private bitrixMap:BitrixMap;
+    private clientWebsocketId:string;
 
     bitrixController:BitrixController;
     localController:LocalController;
@@ -37,6 +38,16 @@ export class SyncService {
     private movedFiles:{
       file: TAbstractFile, oldPath:string, newPath:string
     }[]=[];
+
+    makeid(length:number){
+      let result = '';
+      const characters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      const charactersLength = characters.length;
+      for ( let i = 0; i < length; i++ ) {
+          result += characters.charAt(Math.floor(Math.random() * charactersLength));
+      }
+      return result;
+    }
 
     public addMoveFile(file:TAbstractFile, oldPath:string, newPath:string){
       const doubleRecord=this.movedFiles.find(el=>el.newPath===oldPath);
@@ -74,8 +85,9 @@ export class SyncService {
         this.vault = vault;
         this.mappingManager = mappingManager
         this.lastSync=lastSync;
-        this.localController=new LocalController(vault, mappingManager, bitrixApi);
-        this.bitrixController=new BitrixController(mappingManager,  bitrixApi, vault);
+        this.localController=new LocalController(vault, mappingManager);
+        this.clientWebsocketId=this.makeid(32);
+        this.bitrixController=new BitrixController(mappingManager,  bitrixApi, vault, this.clientWebsocketId);
     }
 
     setLastSync(lastSync:number){
@@ -169,7 +181,7 @@ export class SyncService {
       this.fileQueue=[];
     }
 
-    public async checkLocalFile(localFile:TFile, localMapping?:FileMapping, bitrixMapping?:BitrixMapElement):Promise<string[]>{ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
+    public async checkLocalFile(localFile:TFile, localMapping?:FileMapping, bitrixMapping?:BitrixMapElement):Promise<string[]>{
       const moved=this.movedFiles.find(el=>el.newPath===localFile.path);
       const changedFiles:string[]=[];
       if (moved){
@@ -460,8 +472,38 @@ export class SyncService {
           const folderMap=folderMappings.find(el=>el.path===folderInBitrix.path);
           const localFolder=localFolders.find(el=>el.path===folderInBitrix.path);
           this.checkBitrixFolder(folderInBitrix, folderMap, localFolder);
-          
       }
     }
 
+  async parseEventWebSocket(event:{command:string, params:any}){
+    const clientWebsocketId=event.params.clientWebSocketId;
+    if (!clientWebsocketId||clientWebsocketId!==this.clientWebsocketId) return;
+    if (event.command.includes('FILE_')){
+      const bitrixFileId=event.params.fileId;
+      const path=event.params.path;
+      const bitrixMap=await (new BitrixMap(this.bitrixApi)).getFileByMapId(bitrixFileId, this.mappingManager.mappings);
+      const localMap=this.mappingManager.getMappingByLocalPath(path);
+      const localFile=this.vault.getFileByPath(path);
+      if (localFile){
+        await this.checkLocalFile(localFile, localMap, bitrixMap);
+      }
+      else if(bitrixMap){
+        this.checkBitrixFile(bitrixMap, localMap, localFile||undefined);
+      }
+    }
+    if (event.command.includes('FOLDER_')){
+      const bitrixFolderId=event.params.fileId;
+      const path=event.params.path;
+      const bitrixMap=await (new BitrixMap(this.bitrixApi)).getFolderByMapId(bitrixFolderId, this.mappingManager.mappings);
+      const localMap=this.mappingManager.getMappingByLocalPath(path);
+      const localFolder=this.vault.getFolderByPath(path);
+      if (localFolder){
+        await this.checkLocalFolder(localFolder, bitrixMap, localMap);
+      }
+      else if(bitrixMap){
+        this.checkBitrixFolder(bitrixMap, localMap, localFolder||undefined);
+      }
+    }
+    this.processFileQueue();
+  }
 }

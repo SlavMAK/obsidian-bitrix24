@@ -160,18 +160,6 @@ export default class Bitrix24Sync extends Plugin {
       this.bitrix24Api.expiresIn=this.settings.expires_in;
     }
     
-    this.bitrix24Api.getWebSocketClient().then(result=>{
-      if (!result) return;
-      result.onmessage=(event)=>{
-        const dataRaw=(event?.data||'').replace(/#!NGINXNMS!#(.*)#!NGINXNME!#/, '$1');
-        try {
-          const data=JSON.parse(dataRaw);
-          console.log(data);
-        } catch (error) {
-          console.log('Неверный формат полученного по вебсокету сообщения', event);
-        }
-      };
-    });
 
     // Инициализация сервиса маппинга
     this.mappingManager = MappingManager.fromJSON(this.app.vault, this.settings.mappings);
@@ -185,6 +173,21 @@ export default class Bitrix24Sync extends Plugin {
       // Number(this.settings.lastSync)||0
       0
     );
+
+
+    this.bitrix24Api.getWebSocketClient().then(result=>{
+      if (!result) return;
+      result.onmessage=(event)=>{
+        const dataRaw=(event?.data||'').replace(/#!NGINXNMS!#(.*)#!NGINXNME!#/, '$1');
+        try {
+          const data=JSON.parse(dataRaw);
+          console.log(data);
+          // this.syncService.parseEventWebSocket(data);
+        } catch (error) {
+          console.log('Неверный формат полученного по вебсокету сообщения', event);
+        }
+      };
+    });
 
     this.localEventController=new LocalEventController(this.syncService, this.app, this.mappingManager, this.bitrix24Api);
   }
