@@ -31,55 +31,50 @@ export class BitrixMap{
   }
   
   async fillMapping(arrParents:{folderId:string, folderName: string}[]){
-    try {
-      const batchHelper = new BatchHelper();
-      for (const parent of arrParents){
-        const params={
-          id:parent.folderId
-        };
-        batchHelper.addToBatch({[`getByParent_${parent.folderId}`]:['disk.folder.getchildren', params]});
+    const batchHelper = new BatchHelper();
+    for (const parent of arrParents){
+      const params={
+        id:parent.folderId
+      };
+      batchHelper.addToBatch({[`getByParent_${parent.folderId}`]:['disk.folder.getchildren', params]});
+    }
+    const totalRess=await batchHelper.runAll(this.bitrixApi);
+    const folders:{folderId:string, folderName:string}[]=[];
+    const batchHelperMore50=new BatchHelper();
+    for (const request in totalRess){
+      const res=totalRess[request] as CallResult;
+      if (res.error()){
+        new Notice('Ошибка при синхронизации с битрикс24: '+res.error(),0);
       }
-      const totalRess=await batchHelper.runAll(this.bitrixApi);
-      const folders:{folderId:string, folderName:string}[]=[];
-      const batchHelperMore50=new BatchHelper();
-      for (const request in totalRess){
-        const res=totalRess[request] as CallResult;
-        if (res.error()){
+      if (res.total()>50){
+        batchHelperMore50.getBatchForLength(res.query.method, request, res.total(), res.query.data); 
+      }
+      else{
+        this.fillMappingByresult(res.data());
+        folders.push(...res.data().filter((el:BitrixDiskFolder)=>el.TYPE==='folder').map((el:BitrixDiskFolder)=>({
+          folderId:el.ID,
+          folderName:el.NAME
+        })));
+      }
+    }
+
+    if (batchHelperMore50.getArrBatches().length>0){
+      const totalBatch=await batchHelperMore50.runAll(this.bitrixApi);
+      for (const request in totalBatch){
+        const res=totalBatch[request] as CallResult;
+        if (totalBatch[request].error()){
           new Notice('Ошибка при синхронизации с битрикс24: '+res.error(),0);
         }
-        if (res.total()>50){
-          batchHelperMore50.getBatchForLength(res.query.method, request, res.total(), res.query.data); 
-        }
-        else{
-          this.fillMappingByresult(res.data());
-          folders.push(...res.data().filter((el:BitrixDiskFolder)=>el.TYPE==='folder').map((el:BitrixDiskFolder)=>({
-            folderId:el.ID,
-            folderName:el.NAME
-          })));
-        }
+        this.fillMappingByresult(res.data());
+        folders.push(...res.data().filter((el:BitrixDiskFolder)=>el.TYPE==='folder').map((el:BitrixDiskFolder)=>({
+          folderId:el.ID,
+          folderName:el.NAME
+        })));
       }
+    }
 
-      if (batchHelperMore50.getArrBatches().length>0){
-        const totalBatch=await batchHelperMore50.runAll(this.bitrixApi);
-        for (const request in totalBatch){
-          const res=totalBatch[request] as CallResult;
-          if (totalBatch[request].error()){
-            new Notice('Ошибка при синхронизации с битрикс24: '+res.error(),0);
-          }
-          this.fillMappingByresult(res.data());
-          folders.push(...res.data().filter((el:BitrixDiskFolder)=>el.TYPE==='folder').map((el:BitrixDiskFolder)=>({
-            folderId:el.ID,
-            folderName:el.NAME
-          })));
-        }
-      }
-
-      if (folders.length>0){
-        await this.fillMapping(folders);
-      }
-    } catch (error) {
-      console.error(error);
-      new Notice('Ошибка получения карты файлов из Битрикс24: ' + error, 0);
+    if (folders.length>0){
+      await this.fillMapping(folders);
     }
   }
 
