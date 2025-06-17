@@ -15,8 +15,10 @@ sync_to_github: #Так как остаётся репозиторий клие�
     - git config --global user.name "GitLab Sync Bot"
     - git config --global user.email "gitlab-sync@example.com"
     - echo "https://$GITHUB_TOKEN@github.com/$GITHUB_REPO.git"
-    - git remote remove github
-    - git remote add github https://$GITHUB_TOKEN@github.com/$GITHUB_REPO.git
+    - |
+      if ! git remote | grep -q '^github$'; then
+        git remote add github https://$GITHUB_TOKEN@github.com/$GITHUB_REPO.git
+      fi
     - git push github HEAD:$TARGET_BRANCH
   rules:
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
