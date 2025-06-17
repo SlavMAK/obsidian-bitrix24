@@ -476,8 +476,8 @@ export class SyncService {
     }
 
   async parseEventWebSocket(event:{command:string, params:any}){
-    const clientWebsocketId=event.params.clientWebSocketId;
-    if (!clientWebsocketId||clientWebsocketId!==this.clientWebsocketId) return;
+    const clientWebsocketId=event.params.client;
+    if (!clientWebsocketId||clientWebsocketId===this.clientWebsocketId) return;
     if (event.command.includes('FILE_')){
       const bitrixFileId=event.params.fileId;
       const path=event.params.path;

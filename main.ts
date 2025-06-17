@@ -182,7 +182,7 @@ export default class Bitrix24Sync extends Plugin {
         try {
           const data=JSON.parse(dataRaw);
           console.log(data);
-          // this.syncService.parseEventWebSocket(data);
+          this.syncService.parseEventWebSocket(data?.text||{});
         } catch (error) {
           console.log('Неверный формат полученного по вебсокету сообщения', event);
         }
