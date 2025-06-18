@@ -9,9 +9,8 @@ import { MappingManager } from "src/models/MappingManager";
 import { SyncService } from "src/services/SyncService";
 import { Bitrix24SyncSettingTab } from "src/ui/Bitrix24SyncSettingTab";
 
-const clientId='local.65f7e966bea826.93817329';
-const clientSecret='XS7KY0jMJxKAHfY1D010Wr7Qbcjw40EujLMQIZqLR3oJPen2PH';
-// Remember to rename these classes and interfaces!
+const clientId='app.6852f7fce097f5.55195369';
+const clientSecret='A3yMqlIZnAvZuvOZ1ljztkc9mUL1r0tVfmJ5WkdH80bSkFgNmu';
 
 interface Bitrix24SyncSettings {
   client_endpoint: string;
@@ -138,6 +137,10 @@ export default class Bitrix24Sync extends Plugin {
 
   async saveSettings() {
     await this.saveData(this.settings);
+    if (this.bitrix24Api?.webSocketClient){
+      this.bitrix24Api.webSocketDisconnect();
+    }
+    this.initializeComponents();
   }
 
   initializeComponents() {
@@ -174,7 +177,7 @@ export default class Bitrix24Sync extends Plugin {
       0
     );
 
-
+    if (!this.settings.access_token||!this.settings.refresh_token) return;
     this.bitrix24Api.getWebSocketClient().then(result=>{
       if (!result) return;
       result.onmessage=(event)=>{

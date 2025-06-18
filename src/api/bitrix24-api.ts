@@ -230,6 +230,12 @@ export class Bitrix24Api {
         }
     }
 
+    async webSocketDisconnect(){
+      if (!this.webSocketClient) return;
+      this.webSocketClient.close();
+      this.webSocketClient=undefined;
+    }
+
     async getWebSocketClient(){
       try {
         const result=await this.callMethod('pull.application.config.get', {});
