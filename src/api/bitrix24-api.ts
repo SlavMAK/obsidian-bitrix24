@@ -20,15 +20,17 @@ export class Bitrix24Api {
     clientId:string;
     clientSecret:string;
     webSocketClient:WebSocket|undefined;
+    cbOnRequest?:(params:{refreshToken:string, accessToken:string, expiresIn:number})=>void
 
     
-    constructor(auth:BitrixAuthType){
+    constructor(auth:BitrixAuthType, cb?:(params:{refreshToken:string, accessToken:string, expiresIn:number})=>void){
         this.refreshToken = auth.refresh_token;
         this.accessToken = auth.access_token;
         this.expiresIn = auth.expires_in;
         this.clientId = auth.client_id;
         this.clientSecret = auth.client_secret;
         this.clientEndpoint = auth.client_endpoint;
+        this.cbOnRequest=cb;
     }
 
     async makeRequest<T = any>(url: string, options: RequestOptions = {}): Promise<T> {

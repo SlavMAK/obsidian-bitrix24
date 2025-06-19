@@ -385,7 +385,7 @@ export class Bitrix24SyncSettingTab extends PluginSettingTab {
           this.plugin.settings.refresh_token=this.tempSettings.refresh_token;
           this.plugin.settings.storageId=this.tempSettings.storageId;
           this.plugin.settings.folderId=this.tempSettings.folderId;
-          await this.plugin.saveSettings();
+          await this.plugin.saveSettings(true);
           this.plugin.initializeComponents();
           new Notice('Настройки сохранены')
         } catch (error) {

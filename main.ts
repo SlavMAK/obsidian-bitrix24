@@ -135,12 +135,14 @@ export default class Bitrix24Sync extends Plugin {
     );
   }
 
-  async saveSettings() {
+  async saveSettings(reloadPlugin=false) {
     await this.saveData(this.settings);
-    if (this.bitrix24Api?.webSocketClient){
-      this.bitrix24Api.webSocketDisconnect();
+    if (reloadPlugin){
+      if (this.bitrix24Api?.webSocketClient){
+        this.bitrix24Api.webSocketDisconnect();
+      }
+      this.initializeComponents();
     }
-    this.initializeComponents();
   }
 
   initializeComponents() {
@@ -154,6 +156,11 @@ export default class Bitrix24Sync extends Plugin {
         refresh_token: this.settings.refresh_token,
         client_endpoint: this.settings.client_endpoint,
         expires_in: this.settings.expires_in
+      }, params=>{
+        this.settings.access_token=params.accessToken;
+        this.settings.refresh_token=params.refreshToken;
+        this.settings.expires_in=params.expiresIn;
+        this.saveSettings(true);
       });
     }
     else{
