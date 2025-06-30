@@ -4,19 +4,21 @@ import { BitrixMap } from "src/models/BitrixMap";
 import { MappingManager } from "src/models/MappingManager";
 import { SyncService } from "src/services/SyncService";
 import { ACTION as BITRIX_ACTION } from "./BitrixController";
+import { Logger } from "src/services/LoggerService";
 
 export class LocalEventController{
   constructor(
     private readonly syncService:SyncService,
     private readonly app:App,
     private mappingManager:MappingManager,
-    private bitrixApi:Bitrix24Api
+    private bitrixApi:Bitrix24Api,
+    private logger:Logger
   ){}
 
   async onMove(file:TAbstractFile, oldPath:string){
       if (file instanceof TFile){
         if (this.syncService.isAwaitMoveByNewPath(file.parent?.path||'')){
-          console.log('Не обрабатываем перемещение файла, так как сейчас перемещается его родитель - ', file.path);
+          this.logger.log('Не обрабатываем перемещение файла, так как сейчас перемещается его родитель - ', 'INFO', file);
           return;
         }
         const localFile=await this.app.vault.getFileByPath(file.path);
@@ -36,6 +38,10 @@ export class LocalEventController{
   }
 
   public async onUpdate(file:TAbstractFile){
+    if (this.syncService.isIgnore(file.path)){
+      this.logger.log('Локальное обновление проигнорировано, так как файл недавно обновлён', 'INFO', file.path);
+      return;
+    }
     const localFile=await this.app.vault.getFileByPath(file.path);
     if (!localFile) throw new Error('Не удалось получить файл по пути '+file.path);
     const localMap=this.mappingManager.getMappingByLocalPath(localFile.path);
@@ -61,7 +67,7 @@ export class LocalEventController{
   async onDelete(file:TAbstractFile){
     const localMap=this.mappingManager.getMappingByLocalPath(file.path);
     if (!localMap){
-      console.log('Файл не входит в синхронизацию - ', file.path);
+      this.logger.log('Файл не входит в синхронизацию - ', 'INFO', file.path);
       return;
     }
 

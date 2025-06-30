@@ -6,6 +6,7 @@ import { ACTION as ACTION_LOCAL, LocalController } from "src/controllers/LocalCo
 import { ACTION as ACTION_BITRIX, BitrixController } from 'src/controllers/BitrixController';
 import { ConflictResolutionModal, DiffContents } from "src/ui/ConflictResolutionModal";
 import { getTextRemoteFile } from "src/helpers/getTextRemoteFile";
+import { Logger } from "./LoggerService";
 
 
 
@@ -31,9 +32,13 @@ export class SyncService {
 
     private bitrixMap:BitrixMap;
     private clientWebsocketId:string;
+    private logger:Logger;
 
     bitrixController:BitrixController;
     localController:LocalController;
+
+    tempIgnoreFile:Set<string>=new Set();
+    mapTempIgnoreTimer:Map<string, NodeJS.Timeout>=new Map();
     
     private movedFiles:{
       file: TAbstractFile, oldPath:string, newPath:string
@@ -47,6 +52,26 @@ export class SyncService {
           result += characters.charAt(Math.floor(Math.random() * charactersLength));
       }
       return result;
+    }
+
+    addToIgnore(pathFile:string){
+      if (!this.tempIgnoreFile.has(pathFile)){
+        this.tempIgnoreFile.add(pathFile);
+      }
+      const tempTimer=this.mapTempIgnoreTimer.get('pathFile');
+      if (tempTimer){
+        clearTimeout(tempTimer);
+      }
+      const timer=setTimeout(()=>{
+        if (this.tempIgnoreFile.has(pathFile)){
+          this.tempIgnoreFile.delete(pathFile);
+        }
+      }, 5000);
+      this.mapTempIgnoreTimer.set(pathFile, timer);
+    }
+
+    isIgnore(path:string){
+      return this.tempIgnoreFile.has(path);
     }
 
     public addMoveFile(file:TAbstractFile, oldPath:string, newPath:string){
@@ -79,15 +104,27 @@ export class SyncService {
         mappingManager:MappingManager,
         vault: Vault,
         private readonly app: App,
-        lastSync: number
+        lastSync: number,
+        logger: Logger
     ) {
         this.bitrixApi = bitrixApi;
         this.vault = vault;
+        this.logger=logger;
         this.mappingManager = mappingManager
         this.lastSync=lastSync;
-        this.localController=new LocalController(vault, mappingManager);
+        this.localController=new LocalController(
+          vault,
+          mappingManager,
+          this.logger
+        );
         this.clientWebsocketId=this.makeid(32);
-        this.bitrixController=new BitrixController(mappingManager,  bitrixApi, vault, this.clientWebsocketId);
+        this.bitrixController=new BitrixController(
+          mappingManager,
+          bitrixApi,
+          vault,
+          this.clientWebsocketId,
+          this.logger
+        );
     }
 
     setLastSync(lastSync:number){
@@ -175,13 +212,24 @@ export class SyncService {
         }
         } catch (error) {
           new Notice('Ошибка обработки очереди: '+error);
+          this.logger.log('Ошибка обработки очереди', 'ERROR', error);
         }
       }
-      console.log(this.fileQueue);
+      this.logger.log('fileQueue', 'INFO', this.fileQueue);
       this.fileQueue=[];
     }
 
     public async checkLocalFile(localFile:TFile, localMapping?:FileMapping, bitrixMapping?:BitrixMapElement):Promise<string[]>{
+      if (this.isIgnore(localFile.path)){
+        this.logger.log('Файл проигнорирован так как был недавнообновлён', "INFO", localFile.path);
+      }
+
+      this.logger.log('checkLocalFile', 'INFO', {
+        localFile,
+        localMapping,
+        bitrixMapping
+      });
+
       const moved=this.movedFiles.find(el=>el.newPath===localFile.path);
       const changedFiles:string[]=[];
       if (moved){
@@ -205,9 +253,9 @@ export class SyncService {
         });
       }
       else if(!localMapping&&bitrixMapping){
-        console.log('!mapping && bitrixMapping:'+localFile.path);
+        this.logger.log('!mapping && bitrixMapping:'+localFile.path);
         await this.resolveConflict(localFile, bitrixMapping);
-        console.log('resolved');
+        this.logger.log('resolved', 'INFO');
       }
       else if(bitrixMapping&&localMapping){
         changedFiles.push(bitrixMapping.id);
@@ -235,9 +283,9 @@ export class SyncService {
           localMapping.lastLocalMtime<localFile.stat.mtime
           &&localMapping.lastUpdatBitrix<bitrixMapping.lastUpdate
         ){
-          console.log('localMapping.lastLocalMtime<localFile.stat.mtime&&!mapping && bitrixMapping', localFile.path);
+          this.logger.log('localMapping.lastLocalMtime<localFile.stat.mtime&&!mapping && bitrixMapping', 'INFO', localFile.path);
           await this.resolveConflict(localFile, bitrixMapping);
-          console.log('resolved');
+          this.logger.log('resolved', 'INFO');
         }
       }
       if (localMapping&&!bitrixMapping){
@@ -250,7 +298,7 @@ export class SyncService {
           });
         }
         else{
-          console.log('Файл удалён в битриксе.'+localMapping.path);
+          this.logger.log('Файл удалён в битриксе.', 'INFO', localMapping.path);
           this.fileQueue.push({
             action: ACTION_LOCAL.DELETE_FILE,
             data: { localFile, localMapping }
@@ -261,9 +309,18 @@ export class SyncService {
     }
 
     checkBitrixFile(bitrixFile:BitrixMapElement, localMap?:FileMapping, fileLocal?:TFile){
+        if (this.isIgnore(bitrixFile.path)){
+          this.logger.log('Файл проигнорирован так как был недавнообновлён', "INFO", bitrixFile.path);
+        }
+
+        this.logger.log('checkBitrixFile', 'INFO', {
+          bitrixFile,
+          localMap,
+          fileLocal
+        });
         const moved=this.movedFiles.find(el=>el.newPath===bitrixFile.path);
         if (moved) {
-          console.log('Пропустил так как перемещён (bitrixFile.path)', bitrixFile.path);
+          this.logger.log('Пропустил так как перемещён (bitrixFile.path)', 'INFO', bitrixFile.path);
           return;
         }
 
@@ -275,7 +332,7 @@ export class SyncService {
           });
         }
         else if(!fileLocal&&localMap){
-          console.log('Файл удалён в ФС. Удаляем и в битриксе: '+bitrixFile.path);
+          this.logger.log('Файл удалён в ФС. Удаляем и в битриксе: ', 'INFO', bitrixFile.path);
           this.fileQueue.push({
             action: ACTION_BITRIX.DELETE_FILE,
             data: { file: bitrixFile, localMapping:localMap }
@@ -382,10 +439,11 @@ export class SyncService {
                     break;
                 }
                 new Notice(`Конфликт разрешен для файла: ${file.name}`);
+                this.logger.log('Конфликт разрешен для файла', 'INFO', file);
                 resolve (true);
               } catch (error) {
-                console.error(`Error resolving conflict for file ${file.path}:`, error);
                 new Notice(`Ошибка при разрешении конфликта: ${error.message}`);
+                this.logger.log('Ошибка при разрешении конфликта', 'ERROR', {file, error});
                 resolve(false);
               }
             }
@@ -397,6 +455,7 @@ export class SyncService {
     async checkLocalFolder(localFolder:TFolder, bitrixMapping?:BitrixMapElement, localMapping?:FileMapping){ //TODO сделать проверку на игнор карты битрикс (если это событие а не полная синхронизация)
       if (localFolder.path === '/') return;
       // Проверяем, существует ли маппинг для этой папки
+      this.logger.log('checkLocalFolder', 'INFO', {localFolder, bitrixMapping, localMapping});
       const moved=this.movedFiles.find(el=>el.newPath===localFolder.path);
       if (moved){
         this.fileQueue.push({
@@ -426,7 +485,7 @@ export class SyncService {
           })
         }
         else{
-          console.log('Папка была удалена в битрикс');
+          this.logger.log('Папка была удалена в битрикс', 'INFO', localMapping.path);
           this.fileQueue.push({
             action: ACTION_LOCAL.DELETE_FOLDER,
             data:{localFolder, localMapping}
@@ -436,9 +495,10 @@ export class SyncService {
     }
 
     checkBitrixFolder(folderInBitrix:BitrixMapElement, folderMapping?:FileMapping, localFolder?:TFolder){
+      this.logger.log('checkBitrixFolder', 'INFO', {folderInBitrix, folderMapping, localFolder});
       const moved=this.movedFiles.find(el=>el.oldPath===folderInBitrix.path);
       if (moved){
-        console.log('Пропустил ', moved.newPath, moved.oldPath);
+        this.logger.log('Пропустил ', "INFO", {newPath:moved.newPath, oldPath:moved.oldPath});
         return;
       }
       
@@ -449,7 +509,7 @@ export class SyncService {
         });
       }
       else if(!localFolder&&folderMapping){
-        console.log('Папка удалена в ФС, удаляем и в Битрикс - '+folderInBitrix.path);
+        this.logger.log('Папка удалена в ФС, удаляем и в Битрикс ', 'INFO', folderInBitrix.path);
         this.fileQueue.push({
           action: ACTION_BITRIX.DELETE_FOLDER,
           data: { folder: folderInBitrix, localMapping:folderMapping }
@@ -486,9 +546,11 @@ export class SyncService {
       const localFile=this.vault.getFileByPath(path);
       if (localFile){
         await this.checkLocalFile(localFile, localMap, bitrixMap);
+        this.addToIgnore(path);
       }
       else if(bitrixMap){
         this.checkBitrixFile(bitrixMap, localMap, localFile||undefined);
+        this.addToIgnore(path);
       }
     }
     if (event.command.includes('FOLDER_')){
