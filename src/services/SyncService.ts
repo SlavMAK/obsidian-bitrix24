@@ -36,6 +36,9 @@ export class SyncService {
 
     bitrixController:BitrixController;
     localController:LocalController;
+
+    tempIgnoreFile:Set<string>=new Set();
+    mapTempIgnoreTimer:Map<string, NodeJS.Timeout>=new Map();
     
     private movedFiles:{
       file: TAbstractFile, oldPath:string, newPath:string
@@ -49,6 +52,26 @@ export class SyncService {
           result += characters.charAt(Math.floor(Math.random() * charactersLength));
       }
       return result;
+    }
+
+    addToIgnore(pathFile:string){
+      if (!this.tempIgnoreFile.has(pathFile)){
+        this.tempIgnoreFile.add(pathFile);
+      }
+      const tempTimer=this.mapTempIgnoreTimer.get('pathFile');
+      if (tempTimer){
+        clearTimeout(tempTimer);
+      }
+      const timer=setTimeout(()=>{
+        if (this.tempIgnoreFile.has(pathFile)){
+          this.tempIgnoreFile.delete(pathFile);
+        }
+      }, 5000);
+      this.mapTempIgnoreTimer.set(pathFile, timer);
+    }
+
+    isIgnore(path:string){
+      return this.tempIgnoreFile.has(path);
     }
 
     public addMoveFile(file:TAbstractFile, oldPath:string, newPath:string){
@@ -81,16 +104,27 @@ export class SyncService {
         mappingManager:MappingManager,
         vault: Vault,
         private readonly app: App,
-        lastSync: number
+        lastSync: number,
+        logger: Logger
     ) {
         this.bitrixApi = bitrixApi;
         this.vault = vault;
-        this.logger=new Logger(vault);
+        this.logger=logger;
         this.mappingManager = mappingManager
         this.lastSync=lastSync;
-        this.localController=new LocalController(vault, mappingManager);
+        this.localController=new LocalController(
+          vault,
+          mappingManager,
+          this.logger
+        );
         this.clientWebsocketId=this.makeid(32);
-        this.bitrixController=new BitrixController(mappingManager,  bitrixApi, vault, this.clientWebsocketId);
+        this.bitrixController=new BitrixController(
+          mappingManager,
+          bitrixApi,
+          vault,
+          this.clientWebsocketId,
+          this.logger
+        );
     }
 
     setLastSync(lastSync:number){
@@ -178,6 +212,7 @@ export class SyncService {
         }
         } catch (error) {
           new Notice('Ошибка обработки очереди: '+error);
+          this.logger.log('Ошибка обработки очереди', 'ERROR', error);
         }
       }
       this.logger.log('fileQueue', 'INFO', this.fileQueue);
@@ -185,6 +220,10 @@ export class SyncService {
     }
 
     public async checkLocalFile(localFile:TFile, localMapping?:FileMapping, bitrixMapping?:BitrixMapElement):Promise<string[]>{
+      if (this.isIgnore(localFile.path)){
+        this.logger.log('Файл проигнорирован так как был недавнообновлён', "INFO", localFile.path);
+      }
+
       this.logger.log('checkLocalFile', 'INFO', {
         localFile,
         localMapping,
@@ -270,6 +309,10 @@ export class SyncService {
     }
 
     checkBitrixFile(bitrixFile:BitrixMapElement, localMap?:FileMapping, fileLocal?:TFile){
+        if (this.isIgnore(bitrixFile.path)){
+          this.logger.log('Файл проигнорирован так как был недавнообновлён', "INFO", bitrixFile.path);
+        }
+
         this.logger.log('checkBitrixFile', 'INFO', {
           bitrixFile,
           localMap,
@@ -396,10 +439,11 @@ export class SyncService {
                     break;
                 }
                 new Notice(`Конфликт разрешен для файла: ${file.name}`);
+                this.logger.log('Конфликт разрешен для файла', 'INFO', file);
                 resolve (true);
               } catch (error) {
-                console.error(`Error resolving conflict for file ${file.path}:`, error);
                 new Notice(`Ошибка при разрешении конфликта: ${error.message}`);
+                this.logger.log('Ошибка при разрешении конфликта', 'ERROR', {file, error});
                 resolve(false);
               }
             }
@@ -502,9 +546,11 @@ export class SyncService {
       const localFile=this.vault.getFileByPath(path);
       if (localFile){
         await this.checkLocalFile(localFile, localMap, bitrixMap);
+        this.addToIgnore(path);
       }
       else if(bitrixMap){
         this.checkBitrixFile(bitrixMap, localMap, localFile||undefined);
+        this.addToIgnore(path);
       }
     }
     if (event.command.includes('FOLDER_')){

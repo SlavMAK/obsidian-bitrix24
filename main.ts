@@ -6,6 +6,7 @@ import { Bitrix24Api } from "src/api/bitrix24-api";
 import { LocalEventController } from "src/controllers/LocalEventController";
 import { BitrixMap } from "src/models/BitrixMap";
 import { MappingManager } from "src/models/MappingManager";
+import { Logger } from "src/services/LoggerService";
 import { SyncService } from "src/services/SyncService";
 import { Bitrix24SyncSettingTab } from "src/ui/Bitrix24SyncSettingTab";
 
@@ -47,10 +48,12 @@ export default class Bitrix24Sync extends Plugin {
   bitrix24Api: Bitrix24Api;
   mappingManager:MappingManager
   localEventController:LocalEventController;
+  logger: Logger;
 
   async onload() {
     await this.loadSettings();
-    console.log("Loading Bitrix24 Sync plugin. Period sync: "+this.settings.syncInterval);
+    this.logger=new Logger(this.app.vault);
+    this.logger.log("Loading Bitrix24 Sync plugin. Period sync: "+this.settings.syncInterval, 'INFO');
 
     this.initializeComponents();
     //Вкладка настроек
@@ -96,7 +99,7 @@ export default class Bitrix24Sync extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('delete', async (file)=>{
-        console.log('Обнаружено удаление файла: '+file.path);
+        this.logger.log('Обнаружено удаление файла: '+file.path);
         try {
           this.localEventController.onDelete(file);
           this.settings.lastSync=new Date().getTime();
@@ -110,7 +113,7 @@ export default class Bitrix24Sync extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('create', async (file)=>{
-        console.log('Обнаружено создание файла: '+file.path);
+        this.logger.log('Обнаружено создание файла: '+file.path);
         // try {
         //   this.localEventController.onCreate(file);
         //   this.settings.lastSync=new Date().getTime();
@@ -124,7 +127,7 @@ export default class Bitrix24Sync extends Plugin {
   }
 
   onunload() {
-    console.log("Unloading Bitrix24 Sync plugin");
+    this.logger.log("Unloading Bitrix24 Sync plugin");
   }
 
   async loadSettings() {
@@ -147,7 +150,6 @@ export default class Bitrix24Sync extends Plugin {
 
   initializeComponents() {
     // Инициализация API клиента
-    console.log(new Date(this.settings.expires_in));
     if (!this.bitrix24Api){
       this.bitrix24Api = new Bitrix24Api({
         client_id: clientId,
@@ -180,8 +182,8 @@ export default class Bitrix24Sync extends Plugin {
       this.mappingManager,
       this.app.vault,
       this.app,
-      // Number(this.settings.lastSync)||0
-      0
+      0,
+      this.logger
     );
 
     if (!this.settings.access_token||!this.settings.refresh_token) return;
@@ -191,15 +193,20 @@ export default class Bitrix24Sync extends Plugin {
         const dataRaw=(event?.data||'').replace(/#!NGINXNMS!#(.*)#!NGINXNME!#/, '$1');
         try {
           const data=JSON.parse(dataRaw);
-          console.log(data);
           this.syncService.parseEventWebSocket(data?.text||{});
         } catch (error) {
-          console.log('Неверный формат полученного по вебсокету сообщения', event);
+          this.logger.log('Неверный формат полученного по вебсокету сообщения', 'ERROR', event);
         }
       };
     });
 
-    this.localEventController=new LocalEventController(this.syncService, this.app, this.mappingManager, this.bitrix24Api);
+    this.localEventController=new LocalEventController(
+      this.syncService,
+      this.app,
+      this.mappingManager,
+      this.bitrix24Api,
+      this.logger
+    );
   }
 
   addCommands() {
@@ -271,7 +278,7 @@ export default class Bitrix24Sync extends Plugin {
       this.settings.mappings=this.mappingManager.toJSON();
       this.saveSettings();
     } catch (error) {
-      console.error('Error during sync with Bitrix.Disk:', error);
+      this.logger.log('Error during sync with Bitrix.Disk:', 'ERROR', error);
       new Notice(`Sync error: ${error.message || 'Unknown error'}`);
     }
     finally{

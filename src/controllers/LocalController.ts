@@ -2,6 +2,7 @@ import { Notice, TFile, TFolder, Vault } from "obsidian";
 import { universalDownloadFile } from "src/helpers/universalDownloadFile";
 import { BitrixMapElement } from "src/models/BitrixMap";
 import { FileMapping, MappingManager } from "src/models/MappingManager";
+import { Logger } from "src/services/LoggerService";
 
 export const ACTION={
   CREATE_FILE:'createFileInLocal',
@@ -20,14 +21,15 @@ export const ACTION={
 export class LocalController{
   constructor(
     private vault:Vault,
-    private mappingManager:MappingManager
+    private mappingManager:MappingManager,
+    private logger:Logger
   ){}
 
 
   public async createFolder(folder:BitrixMapElement){
     if (!(await this.vault.adapter.exists(folder.path))){
       await this.vault.createFolder(folder.path);
-      console.log('Создал папку '+folder.path);
+      this.logger.log('Создал папку ', 'INFO', folder.path);
       this.mappingManager.add({
         id:folder.id,
         name:folder.name,
@@ -122,7 +124,7 @@ export class LocalController{
   }
 
   public async updateFileByContent(file:TFile, content:string , time: number){
-    console.log(time, new Date(time));
+    this.logger.log('updateFileByContent ', 'INFO', {time, date:new Date(time)});
     await this.vault.adapter.write(file.path, content, {mtime:time});
     const localMap=this.mappingManager.getMappingByLocalPath(file.path);
     if (!localMap) return;

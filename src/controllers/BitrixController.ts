@@ -2,6 +2,7 @@ import { Notice, TAbstractFile, TFile, TFolder, Vault } from "obsidian";
 import { Bitrix24Api } from "src/api/bitrix24-api";
 import { BitrixMap, BitrixMapElement } from "src/models/BitrixMap";
 import { FileMapping, MappingManager } from "src/models/MappingManager";
+import { Logger } from "src/services/LoggerService";
 
 export const ACTION={
   CREATE_FILE:'createFileInBitrix',
@@ -21,7 +22,8 @@ export class BitrixController{
     private mappingManager:MappingManager,
     private bitrixApi:Bitrix24Api,
     private vault:Vault,
-    private clientWebSocketId:string
+    private clientWebSocketId:string,
+    private logger:Logger
   ){}
 
   setBitrixMap(map:BitrixMap){
@@ -31,7 +33,7 @@ export class BitrixController{
   async createFolder(folder:TFolder){
     const parent=this.bitrixMap.map.find(el=>el.path===folder.parent?.path);
     if (!parent){
-      console.log('Не нашёл родителя для папки ', folder.path);
+      this.logger.log('Не нашёл родителя для папки ', 'ERROR', folder.path);
       return;
     }
     const result=await this.bitrixApi.callBatch({
@@ -67,7 +69,7 @@ export class BitrixController{
     const base64File=await this.getFileAsBase64(this.vault, file);
     const parent=this.mappingManager.getMappingByLocalPath(file.parent?.path||"/");
     if (!parent){
-      console.log('Не нашёл родителя для папки ', file.path||'');
+      this.logger.log('Не нашёл родителя для папки ', 'ERROR', file);
       return
     }
     const result=await this.bitrixApi.callBatch({
@@ -348,7 +350,7 @@ export class BitrixController{
       const base64 = this.arrayBufferToBase64(arrayBuffer);
       return base64;
     } catch (error) {
-      console.error(`Error getting base64 for file ${file.path}:`, error);
+      this.logger.log(`Error getting base64 for file ${file.path}:`, 'ERROR', error);
       throw error;
     }
   }
