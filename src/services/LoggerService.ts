@@ -35,9 +35,9 @@ export class Logger {
       if (!existFile){
         await this.vault.adapter.write(this.logDir+this.logFilePath, "");
       }
-      this.vault.adapter.append(normalizePath(this.logDir+this.logFilePath), "=============================================\n");
-      this.vault.adapter.append(normalizePath(this.logDir+this.logFilePath), "===================APP RESTARTED=============\n");
-      this.vault.adapter.append(normalizePath(this.logDir+this.logFilePath), "=============================================\n");
+      await this.vault.adapter.append(normalizePath(this.logDir+this.logFilePath), "=============================================\n");
+      await this.vault.adapter.append(normalizePath(this.logDir+this.logFilePath), "===================APP RESTARTED=============\n");
+      await this.vault.adapter.append(normalizePath(this.logDir+this.logFilePath), "=============================================\n");
       this.inited=true;
     } catch (error) {
       console.error(error);

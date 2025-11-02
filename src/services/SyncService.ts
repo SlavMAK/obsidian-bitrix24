@@ -58,7 +58,7 @@ export class SyncService {
       if (!this.tempIgnoreFile.has(pathFile)){
         this.tempIgnoreFile.add(pathFile);
       }
-      const tempTimer=this.mapTempIgnoreTimer.get('pathFile');
+      const tempTimer=this.mapTempIgnoreTimer.get(pathFile);
       if (tempTimer){
         clearTimeout(tempTimer);
       }
@@ -202,10 +202,10 @@ export class SyncService {
               await this.localController.deleteFile(item.data.localFile as TFile, item.data.localMapping as FileMapping);
               break;
             case ACTION_BITRIX.DELETE_FILE:
-              this.bitrixController.deleteFile(item.data.file as BitrixMapElement, item.data.localMapping as FileMapping);
+              await this.bitrixController.deleteFile(item.data.file as BitrixMapElement, item.data.localMapping as FileMapping);
               break;
             case ACTION_BITRIX.DELETE_FOLDER:
-              this.bitrixController.deleteFolder(item.data.folder as BitrixMapElement, item.data.localMapping as FileMapping);
+              await this.bitrixController.deleteFolder(item.data.folder as BitrixMapElement, item.data.localMapping as FileMapping);
               break;
             default:
             break;
@@ -222,6 +222,7 @@ export class SyncService {
     public async checkLocalFile(localFile:TFile, localMapping?:FileMapping, bitrixMapping?:BitrixMapElement):Promise<string[]>{
       if (this.isIgnore(localFile.path)){
         this.logger.log('Файл проигнорирован так как был недавнообновлён', "INFO", localFile.path);
+        return [];
       }
 
       this.logger.log('checkLocalFile', 'INFO', {
@@ -298,6 +299,39 @@ export class SyncService {
           });
         }
         else{
+          // КРИТИЧНО: перед удалением проверяем существование файла в Bitrix через API
+          // Если bitrixMap был загружен некорректно, файл может существовать в Bitrix
+          try {
+            const bitrixFileCheck = await (new BitrixMap(this.bitrixApi)).getFileByMapId(localMapping.id, this.mappingManager.mappings);
+            if (bitrixFileCheck) {
+              // Файл существует в Bitrix, но не в мапе - возможно ошибка загрузки
+              this.logger.log('Файл найден в Bitrix через API, но отсутствует в мапе. Возможна ошибка загрузки маппинга.', 'WARN', {
+                filePath: localFile.path,
+                fileId: localMapping.id,
+                bitrixPath: bitrixFileCheck.path
+              });
+              // Добавляем файл в мапу и обновляем маппинг
+              this.bitrixMap.addToMap(bitrixFileCheck);
+              if (bitrixFileCheck.path !== localMapping.path) {
+                // Файл был перемещен
+                this.movedFiles.push({file:localFile, oldPath:localMapping.path, newPath:bitrixFileCheck.path});
+                this.fileQueue.push({
+                  action: ACTION_LOCAL.MOVE_FILE,
+                  data: { localFile, file:bitrixFileCheck, localMapping}
+                });
+              }
+              return changedFiles;
+            }
+          } catch (error) {
+            this.logger.log('Ошибка при проверке существования файла в Bitrix', 'ERROR', {
+              filePath: localFile.path,
+              fileId: localMapping.id,
+              error
+            });
+            // Если не удалось проверить, не удаляем файл - лучше сохранить данные
+            return changedFiles;
+          }
+          // Только если файл действительно не найден в Bitrix, удаляем локально
           this.logger.log('Файл удалён в битриксе.', 'INFO', localMapping.path);
           this.fileQueue.push({
             action: ACTION_LOCAL.DELETE_FILE,
@@ -332,6 +366,26 @@ export class SyncService {
           });
         }
         else if(!fileLocal&&localMap){
+          // КРИТИЧНО: проверяем, действительно ли файл отсутствует локально
+          // Может быть ошибка поиска из-за перемещения файла
+          const fileByActualPath = this.vault.getFileByPath(bitrixFile.path);
+          const fileByMappingPath = localMap.path !== bitrixFile.path 
+            ? this.vault.getFileByPath(localMap.path) 
+            : null;
+          
+          if (fileByActualPath || fileByMappingPath) {
+            // Файл существует локально, но не был найден - возможно проблема с поиском
+            this.logger.log('Файл найден локально, но не был сопоставлен правильно. Возможна ошибка поиска.', 'WARN', {
+              bitrixPath: bitrixFile.path,
+              mappingPath: localMap.path,
+              foundByActualPath: !!fileByActualPath,
+              foundByMappingPath: !!fileByMappingPath
+            });
+            // Не удаляем файл, лучше сохранить данные
+            return;
+          }
+          
+          // Только если файл действительно отсутствует локально, удаляем в Bitrix
           this.logger.log('Файл удалён в ФС. Удаляем и в битриксе: ', 'INFO', bitrixFile.path);
           this.fileQueue.push({
             action: ACTION_BITRIX.DELETE_FILE,
@@ -351,15 +405,22 @@ export class SyncService {
 
       for (const localFile of localFiles) {
         const localMapping = filesMappings.find(el=>el.path===localFile.path);
-        const bitrixMap=bitrixFiles.find(el=>el.path===localMapping?.path);
-        const changedFiles=await this.checkLocalFile(localFile, localMapping, bitrixMap);
-        changedFiles.push(...changedFiles);
+        // Исправление: ищем bitrixFile по ID из localMapping, а не по пути
+        // Если файл был перемещен в Bitrix, путь может не совпадать
+        const bitrixMap = localMapping 
+          ? bitrixFiles.find(el=>el.id===localMapping.id) || bitrixFiles.find(el=>el.path===localFile.path)
+          : undefined;
+        const changedFilesLocal=await this.checkLocalFile(localFile, localMapping, bitrixMap);
+        changedFiles.push(...changedFilesLocal);
       }
 
       for (const bitrixFile of bitrixFiles) {
         if (changedFiles.includes(bitrixFile.id)) continue;
-        const localMap=filesMappings.find(el=>el.path===bitrixFile.path);
-        const localFile=localFiles.find(el=>el.path===localMap?.path);
+        const localMap=filesMappings.find(el=>el.id===bitrixFile.id);
+        // Исправление: ищем локальный файл по пути из bitrixFile, а не из localMap
+        // Если файл был перемещен локально, localMap.path может быть устаревшим
+        const localFile=localFiles.find(el=>el.path===bitrixFile.path) || 
+                       (localMap ? localFiles.find(el=>el.path===localMap.path) : undefined);
         this.checkBitrixFile(bitrixFile, localMap, localFile);
       }
       return result;
@@ -485,6 +546,37 @@ export class SyncService {
           })
         }
         else{
+          // КРИТИЧНО: перед удалением проверяем существование папки в Bitrix через API
+          try {
+            const bitrixFolderCheck = await (new BitrixMap(this.bitrixApi)).getFolderByMapId(localMapping.id, this.mappingManager.mappings);
+            if (bitrixFolderCheck) {
+              // Папка существует в Bitrix, но не в мапе - возможно ошибка загрузки
+              this.logger.log('Папка найдена в Bitrix через API, но отсутствует в мапе. Возможна ошибка загрузки маппинга.', 'WARN', {
+                folderPath: localFolder.path,
+                folderId: localMapping.id,
+                bitrixPath: bitrixFolderCheck.path
+              });
+              // Добавляем папку в мапу
+              this.bitrixMap.addToMap(bitrixFolderCheck);
+              if (bitrixFolderCheck.path !== localMapping.path) {
+                // Папка была перемещена
+                this.fileQueue.push({
+                  action: ACTION_LOCAL.MOVE_FOLDER,
+                  data:{localFolder, folder:bitrixFolderCheck, localMapping}
+                });
+              }
+              return;
+            }
+          } catch (error) {
+            this.logger.log('Ошибка при проверке существования папки в Bitrix', 'ERROR', {
+              folderPath: localFolder.path,
+              folderId: localMapping.id,
+              error
+            });
+            // Если не удалось проверить, не удаляем папку
+            return;
+          }
+          // Только если папка действительно не найдена в Bitrix, удаляем локально
           this.logger.log('Папка была удалена в битрикс', 'INFO', localMapping.path);
           this.fileQueue.push({
             action: ACTION_LOCAL.DELETE_FOLDER,
@@ -509,6 +601,25 @@ export class SyncService {
         });
       }
       else if(!localFolder&&folderMapping){
+        // КРИТИЧНО: проверяем, действительно ли папка отсутствует локально
+        const folderByActualPath = this.vault.getFolderByPath(folderInBitrix.path);
+        const folderByMappingPath = folderMapping.path !== folderInBitrix.path 
+          ? this.vault.getFolderByPath(folderMapping.path) 
+          : null;
+        
+        if (folderByActualPath || folderByMappingPath) {
+          // Папка существует локально, но не была найдена
+          this.logger.log('Папка найдена локально, но не была сопоставлена правильно. Возможна ошибка поиска.', 'WARN', {
+            bitrixPath: folderInBitrix.path,
+            mappingPath: folderMapping.path,
+            foundByActualPath: !!folderByActualPath,
+            foundByMappingPath: !!folderByMappingPath
+          });
+          // Не удаляем папку
+          return;
+        }
+        
+        // Только если папка действительно отсутствует локально, удаляем в Bitrix
         this.logger.log('Папка удалена в ФС, удаляем и в Битрикс ', 'INFO', folderInBitrix.path);
         this.fileQueue.push({
           action: ACTION_BITRIX.DELETE_FOLDER,
@@ -523,14 +634,21 @@ export class SyncService {
 
       for (const localFolder of localFolders) {
         const folderMap=folderMappings.find(el=>el.path===localFolder.path);
-        const bitrixMap=bitrixFolders.find(el=>el.path===localFolder.path);
+        // Исправление: ищем bitrixFolder по ID из folderMap, а не по пути
+        // Если папка была перемещена в Bitrix, путь может не совпадать
+        const bitrixMap = folderMap 
+          ? bitrixFolders.find(el=>el.id===folderMap.id) || bitrixFolders.find(el=>el.path===localFolder.path)
+          : undefined;
         await this.checkLocalFolder(localFolder, bitrixMap, folderMap);
       }
 
       for (const folderInBitrix of bitrixFolders) {
           // Проверяем, существует ли папка локально
-          const folderMap=folderMappings.find(el=>el.path===folderInBitrix.path);
-          const localFolder=localFolders.find(el=>el.path===folderInBitrix.path);
+          const folderMap=folderMappings.find(el=>el.id===folderInBitrix.id);
+          // Исправление: ищем локальную папку по пути из folderInBitrix, а не из folderMap
+          // Если папка была перемещена локально, folderMap.path может быть устаревшим
+          const localFolder=localFolders.find(el=>el.path===folderInBitrix.path) || 
+            (folderMap ? localFolders.find(el=>el.path===folderMap.path) : undefined);
           this.checkBitrixFolder(folderInBitrix, folderMap, localFolder);
       }
     }
@@ -566,6 +684,6 @@ export class SyncService {
         this.checkBitrixFolder(bitrixMap, localMap, localFolder||undefined);
       }
     }
-    this.processFileQueue();
+    await this.processFileQueue();
   }
 }
