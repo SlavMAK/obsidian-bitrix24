@@ -1,5 +1,5 @@
 # Bitrix24 Obsidian Plugin
-Coming soon. Closed beta testing..
+Coming soon. Closed beta testing...
 
 ## RU
 
