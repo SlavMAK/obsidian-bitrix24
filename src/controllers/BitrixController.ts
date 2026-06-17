@@ -16,7 +16,7 @@ export const ACTION={
 
 export class BitrixController{
 
-  bitrixMap:BitrixMap;
+  bitrixMap!:BitrixMap;
 
   constructor(
     private mappingManager:MappingManager,
@@ -31,7 +31,8 @@ export class BitrixController{
   }
 
   async createFolder(folder:TFolder){
-    const parent=this.bitrixMap.map.find(el=>el.path===folder.parent?.path);
+    const parentPath=folder.parent?.path||'/';
+    const parent=this.mappingManager.getMappingByLocalPath(parentPath);
     if (!parent){
       this.logger.log('Не нашёл родителя для папки ', 'ERROR', folder.path);
       return;
@@ -42,14 +43,6 @@ export class BitrixController{
         data:{
           NAME:folder?.name||''
         }
-      }],
-      sendEvent:['pull.application.event.add', {
-        COMMAND:'FOLDER_CREATE',
-        PARAMS:JSON.stringify({
-          fileId:parent.id,
-          path:parent.path,
-          client:this.clientWebSocketId
-        })
       }]
     });
     
@@ -79,19 +72,13 @@ export class BitrixController{
             NAME: file.name
         },
         fileContent:[file.name, base64File||'IA==']
-      }],
-      sendEvent:['pull.application.event.add', {
-        COMMAND:'FILE_CREATE',
-        PARAMS:JSON.stringify({
-          fileId:'$result[createFile][ID]',
-          path:file.path,
-          client:this.clientWebSocketId
-        })
       }]
     });
     
     if (result.createFile.error()){
-      new Notice('Ошибка при создании файла '+result.createFile.error());
+      const err=result.createFile.error();
+      this.logger.log('Ошибка при создании файла в Битрикс', 'ERROR', {path: file.path, parent: parent.id, error: err});
+      new Notice('Ошибка при создании файла '+err);
     }
     else {
       this.mappingManager.add({
@@ -107,67 +94,48 @@ export class BitrixController{
 
   async deleteFile(bitrixMap:BitrixMapElement, localMap:FileMapping){
     const result=await this.bitrixApi.callBatch({
-      removeFile:['disk.file.markdeleted', {id:bitrixMap.id}],
-      sendEvent:['pull.application.event.add', {
-        COMMAND:'FILE_DELETE',
-        PARAMS:JSON.stringify({
-          fileId:bitrixMap.id,
-          path:bitrixMap.path,
-          client:this.clientWebSocketId
-        })
-      }]
+      removeFile:['disk.file.markdeleted', {id:bitrixMap.id}]
     });
     
     if (result.removeFile.error()){
-      new Notice('Ошибка удаления из битрикс файла  '+bitrixMap.path+' '+result.removeFile.error());
+      const err=result.removeFile.error();
+      this.logger.log('Ошибка удаления файла в Битрикс', 'ERROR', {path: bitrixMap.path, id: bitrixMap.id, error: err});
+      new Notice('Ошибка удаления из битрикс файла  '+bitrixMap.path+' '+err);
       return;
     }
-    const mappingIdx=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
-    this.mappingManager.mappings.splice(mappingIdx,1);
+    this.mappingManager.remove(localMap.id);
   }
 
   async deleteFolder(bitrixMap:BitrixMapElement, localMap:FileMapping){
     const result=await this.bitrixApi.callBatch({
-      deleteFolder:['disk.folder.markdeleted', {id:bitrixMap.id}],
-      sendEvent:['pull.application.event.add', {
-        COMMAND:'FOLDER_DELETE',
-        PARAMS:JSON.stringify({
-          fileId:bitrixMap.id,
-          path:bitrixMap.path,
-          client:this.clientWebSocketId
-        })
-      }]
+      deleteFolder:['disk.folder.markdeleted', {id:bitrixMap.id}]
     });
     
     if (result.deleteFolder.error()){
-      new Notice('Ошибка удаления из битрикс папки  '+bitrixMap.path+' '+result.deleteFolder.error());
+      const err=result.deleteFolder.error();
+      this.logger.log('Ошибка удаления папки в Битрикс', 'ERROR', {path: bitrixMap.path, id: bitrixMap.id, error: err});
+      new Notice('Ошибка удаления из битрикс папки  '+bitrixMap.path+' '+err);
       return;
     }
-    const mappingIdx=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
-    this.mappingManager.mappings.splice(mappingIdx,1);
+    this.mappingManager.remove(localMap.id);
   }
 
   async updateFile(file:TFile, bitrixMap:BitrixMapElement){
     const findedFile=this.vault.getFileByPath(file.path);
     if (!findedFile){
+      this.logger.log('updateFile: не нашёл локальный файл', 'ERROR', {path: file.path, bitrixId: bitrixMap.id});
       new Notice('Не могу найти файл по пути '+file.path);
       return;
     }
     const base64File=await this.getFileAsBase64(this.vault, findedFile);
     const result=await this.bitrixApi.callBatch({
-      updateFile:['disk.file.uploadversion', {id:bitrixMap.id, fileContent:[bitrixMap.name, base64File]}],
-      sendEvent:['pull.application.event.add', {
-        COMMAND:'FILE_UPDATE',
-        PARAMS:JSON.stringify({
-          fileId:bitrixMap.id,
-          path:file.path,
-          client:this.clientWebSocketId
-        })
-      }]
+      updateFile:['disk.file.uploadversion', {id:bitrixMap.id, fileContent:[bitrixMap.name, base64File]}]
     });
 
     if (result.updateFile.error()){
-      new Notice('Ошибка при обработке файла '+result.updateFile.error());
+      const err=result.updateFile.error();
+      this.logger.log('Ошибка обновления файла в Битрикс', 'ERROR', {path: file.path, bitrixId: bitrixMap.id, error: err});
+      new Notice('Ошибка при обработке файла '+err);
       return;
     }
     const mapping=this.mappingManager.getById(bitrixMap.id);
@@ -192,19 +160,13 @@ export class BitrixController{
   async updateFileByContent(file:BitrixMapElement, content:string){
     const base64File=this.arrayBufferToBase64(new TextEncoder().encode(content));
     const result=await this.bitrixApi.callBatch({
-      updateFile:['disk.file.uploadversion', {id:file.id, fileContent:[file.name, base64File]}],
-      sendEvent:['pull.application.event.add', {
-        COMMAND:'FILE_UPDATE',
-        PARAMS:JSON.stringify({
-          fileId:file.id,
-          path:file.path,
-          client:this.clientWebSocketId
-        })
-      }]
+      updateFile:['disk.file.uploadversion', {id:file.id, fileContent:[file.name, base64File]}]
     });
     
     if (result.updateFile.error()){
-      new Notice('Ошибка при обработке файла '+result.updateFile.error());
+      const err=result.updateFile.error();
+      this.logger.log('Ошибка обновления файла в Битрикс (by content)', 'ERROR', {path: file.path, bitrixId: file.id, error: err});
+      new Notice('Ошибка при обработке файла '+err);
       return;
     }
     const mapping=this.mappingManager.getById(file.id);
@@ -228,12 +190,24 @@ export class BitrixController{
   async moveFolder(folderAbstract:TAbstractFile, oldPath:string){
     const folder=this.vault.getFolderByPath(folderAbstract.path);
     if (!folder) {
-      new Notice('Не могу найти папку по пути '+ folderAbstract.path);
+      const msg='Не могу найти папку по пути '+ folderAbstract.path;
+      this.logger.log(msg, 'ERROR', {oldPath, newPath: folderAbstract.path});
+      new Notice(msg);
+      return;
+    }
+    // Та же страховка, что и в moveFile: вложенная папка могла быть передвинута
+    // как часть родительской папки — updateMappingAfterMoveFolder уже обновил
+    // её путь, и oldPath в маппинге больше нет.
+    const folderMappingAtNew=this.mappingManager.getMappingByLocalPath(folder.path);
+    if (folderMappingAtNew && !this.mappingManager.getMappingByLocalPath(oldPath)){
+      this.logger.log('moveFolder: папка уже перемещена в составе родителя, пропускаем', 'INFO', {oldPath, newPath: folder.path});
       return;
     }
     let mapping=this.mappingManager.getMappingByLocalPath(oldPath);
     if (!mapping){//Обработка ошибки отсутствия карты
-      const bitrixMapping=this.bitrixMap.map.find(el=>el.path===oldPath);
+      // Fallback на bitrixMap есть, только если он явно засеян (bulk-операции).
+      // В event-driven flow его нет — просто создаём папку.
+      const bitrixMapping=this?.bitrixMap?.map?.find(el=>el.path===oldPath);
       if (!bitrixMapping){
         await this.createFolder(folder);
         return;
@@ -257,8 +231,9 @@ export class BitrixController{
     const pathParent=folder.parent?.path||'/';
     const oldParentPath=mapping.path.split('/').slice(0, -1).join('/');
     if (oldParentPath!==pathParent){
-      const newParent=this.bitrixMap.map.find(el=>el.path===pathParent);
+      const newParent=this.mappingManager.getMappingByLocalPath(pathParent);
       if (!newParent){
+        this.logger.log('moveFolder: не нашёл новую родительскую папку в маппинге', 'ERROR', {folder: folder.path, oldParentPath, pathParent});
         new Notice(`Ошибка перемещения папки. Не нашёл папку в ${pathParent} в битриксе`);
         return;
       }
@@ -287,13 +262,24 @@ export class BitrixController{
   async moveFile(fileAbstract:TAbstractFile, oldPath:string){
     const file=this.vault.getFileByPath(fileAbstract.path);
     if (!file) {
-      new Notice('Не могу найти файл по пути '+ fileAbstract.path);
+      const msg='Не могу найти файл по пути '+ fileAbstract.path;
+      this.logger.log(msg, 'ERROR', {oldPath, newPath: fileAbstract.path});
+      new Notice(msg);
+      return;
+    }
+    // Если родительская папка была переименована/перемещена раньше нас,
+    // updateMappingAfterMoveFolder уже сдвинул маппинг ребёнка на новый путь.
+    // В этом случае ничего делать не нужно — Битрикс уже передвинул файл вместе с папкой.
+    const mappingAtNewPath=this.mappingManager.getMappingByLocalPath(file.path);
+    if (mappingAtNewPath && !this.mappingManager.getMappingByLocalPath(oldPath)){
+      this.logger.log('moveFile: файл уже перемещён в составе родительской папки, пропускаем', 'INFO', {oldPath, newPath: file.path});
       return;
     }
     const mapping=this.mappingManager.getMappingByLocalPath(oldPath);
     if (!mapping){//Обработка ошибки отсутствия карты
       const bitrixMapping=(this?.bitrixMap?.map||[]).find(el=>el.path===oldPath);
       if (!bitrixMapping){
+        this.logger.log('moveFile: ни маппинга по oldPath, ни по newPath — создаём', 'WARN', {oldPath, newPath: file.path});
         await this.createFile(file);
       }
       else{
@@ -312,8 +298,9 @@ export class BitrixController{
     const pathParent=file.parent?.path||'/';
     const oldParentPath=mapping.path.split('/').slice(0, -1).join('/');
     if (oldParentPath!==pathParent){
-      const newParent=this.bitrixMap.map.find(el=>el.path===pathParent);
+      const newParent=this.mappingManager.getMappingByLocalPath(pathParent);
       if (!newParent){
+        this.logger.log('moveFile: не нашёл новую родительскую папку в маппинге', 'ERROR', {file: file.path, oldParentPath, pathParent});
         new Notice(`Ошибка перемещения файла. Не нашёл папку в ${pathParent} в битриксе`);
         return;
       }
@@ -330,7 +317,9 @@ export class BitrixController{
     if (mapping.name!==file.name){
       const result=await this.bitrixApi.callMethod('disk.file.rename', {id:mapping.id, newName:file.name});
       if (result.error()){
-        new Notice(`Ошибка переименования файла. ${result.error()}`);
+        const err=result.error();
+        this.logger.log('Ошибка переименования файла в Битрикс', 'ERROR', {file: file.path, oldName: mapping.name, newName: file.name, error: err});
+        new Notice(`Ошибка переименования файла. ${err}`);
         return;
       }
       this.mappingManager.set(mapping.id,{

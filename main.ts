@@ -4,9 +4,11 @@ import {
 } from "obsidian";
 import { Bitrix24Api } from "src/api/bitrix24-api";
 import { LocalEventController } from "src/controllers/LocalEventController";
-import { BitrixMap } from "src/models/BitrixMap";
 import { MappingManager } from "src/models/MappingManager";
+import { CatchUpService } from "src/services/CatchUpService";
 import { Logger } from "src/services/LoggerService";
+import { PullAllService } from "src/services/PullAllService";
+import { PushAllService } from "src/services/PushAllService";
 import { SyncService } from "src/services/SyncService";
 import { Bitrix24SyncSettingTab } from "src/ui/Bitrix24SyncSettingTab";
 
@@ -43,12 +45,14 @@ const DEFAULT_SETTINGS: Bitrix24SyncSettings = {
 
 export default class Bitrix24Sync extends Plugin {
   settings: Bitrix24SyncSettings;
-  isSyncing:boolean;
   syncService: SyncService;
   bitrix24Api: Bitrix24Api;
   mappingManager:MappingManager
   localEventController:LocalEventController;
   logger: Logger;
+
+  /** Таймер дебаунса автосейва маппинга (~500ms). */
+  private mappingSaveTimer: NodeJS.Timeout | null = null;
 
   async onload() {
     await this.loadSettings();
@@ -60,36 +64,47 @@ export default class Bitrix24Sync extends Plugin {
     const settingsTab=new Bitrix24SyncSettingTab(this.app, this, {clientId, clientSecret})
     this.addSettingTab(settingsTab);
     this.addCommands();
-    
-    
-    this.registerEvents();
-    this.addPeriodicSync();
+
+
+    // Регистрируем vault-листенеры ТОЛЬКО после layoutReady, иначе
+    // Obsidian при первичном скане vault фаерит `create` на все существующие
+    // файлы (это документированное поведение), и мы их ошибочно
+    // попытаемся «создать» в Битриксе с уже устаревшими parent-id.
+    // Catch-up тоже запускаем после layoutReady, чтобы он не гонялся с
+    // первичным сканом.
+    this.app.workspace.onLayoutReady(() => {
+      this.registerEvents();
+      if (this.isConnectionConfigured()) {
+        // fire-and-forget
+        void this.runCatchUp();
+      }
+    });
+  }
+
+  /** True если задан endpoint, access_token и folderId. */
+  private isConnectionConfigured(): boolean {
+    return !!this.settings.client_endpoint
+      && !!this.settings.access_token
+      && !!this.settings.folderId;
   }
 
   registerEvents(){
     this.registerEvent(
       this.app.vault.on('rename', async (file, oldPath)=>{
-        const currentSync=this.isSyncing;
-        this.isSyncing=true;
         try {
           await this.localEventController.onMove(file, oldPath);
           this.settings.lastSync=new Date().getTime();
-          this.settings.mappings=this.mappingManager.toJSON();
           await this.saveSettings();
         } catch (error) {
           new Notice('Ошибка выполнения команды перемещения файла: '+error.message);
-        }
-        finally{
-          this.isSyncing=currentSync;
         }
       })
     )
     this.registerEvent(
       this.app.vault.on('modify', async (file)=>{
         try {
-          this.localEventController.onUpdate(file);
+          await this.localEventController.onUpdate(file);
           this.settings.lastSync=new Date().getTime();
-          this.settings.mappings=this.mappingManager.toJSON();
           await this.saveSettings();
         } catch (error) {
           new Notice('Ошибка выполнения обновления файла: '+error.message);
@@ -101,9 +116,8 @@ export default class Bitrix24Sync extends Plugin {
       this.app.vault.on('delete', async (file)=>{
         this.logger.log('Обнаружено удаление файла: '+file.path);
         try {
-          this.localEventController.onDelete(file);
+          await this.localEventController.onDelete(file);
           this.settings.lastSync=new Date().getTime();
-          this.settings.mappings=this.mappingManager.toJSON();
           await this.saveSettings();
         } catch (error) {
           new Notice('Ошибка выполнения удаления файла: '+error.message);
@@ -113,20 +127,25 @@ export default class Bitrix24Sync extends Plugin {
 
     this.registerEvent(
       this.app.vault.on('create', async (file)=>{
+        // Отбрасываем временные файлы Obsidian (.tmp).
+        if (file.path.endsWith('.tmp')) return;
         this.logger.log('Обнаружено создание файла: '+file.path);
-        // try {
-        //   this.localEventController.onCreate(file);
-        //   this.settings.lastSync=new Date().getTime();
-        //   this.settings.mappings=this.mappingManager.toJSON();
-        //   await this.saveSettings();
-        // } catch (error) {
-        //   new Notice('Ошибка выполнения создания файла: '+error.message);
-        // }
+        try {
+          await this.localEventController.onCreate(file);
+          this.settings.lastSync=new Date().getTime();
+          await this.saveSettings();
+        } catch (error) {
+          new Notice('Ошибка выполнения создания файла: '+error.message);
+        }
       })
     )
   }
 
   onunload() {
+    if (this.mappingSaveTimer) {
+      clearTimeout(this.mappingSaveTimer);
+      this.mappingSaveTimer = null;
+    }
     this.logger.log("Unloading Bitrix24 Sync plugin");
   }
 
@@ -146,6 +165,25 @@ export default class Bitrix24Sync extends Plugin {
       }
       this.initializeComponents();
     }
+  }
+
+  /**
+   * Дебаунсим автосейв маппинга: каждый вызов сбрасывает предыдущий таймер.
+   * После ~500ms тишины — сериализуем и сохраняем.
+   */
+  private scheduleMappingSave() {
+    if (this.mappingSaveTimer) {
+      clearTimeout(this.mappingSaveTimer);
+    }
+    this.mappingSaveTimer = setTimeout(async () => {
+      this.mappingSaveTimer = null;
+      try {
+        this.settings.mappings = this.mappingManager.toJSON();
+        await this.saveSettings();
+      } catch (err) {
+        this.logger.log('Не удалось сохранить mapping', 'ERROR', err);
+      }
+    }, 500);
   }
 
   initializeComponents() {
@@ -171,11 +209,33 @@ export default class Bitrix24Sync extends Plugin {
       this.bitrix24Api.clientEndpoint=this.settings.client_endpoint;
       this.bitrix24Api.expiresIn=this.settings.expires_in;
     }
-    
 
-    // Инициализация сервиса маппинга
-    this.mappingManager = MappingManager.fromJSON(this.app.vault, this.settings.mappings);
-    
+
+    // Инициализация сервиса маппинга с автосейвом по onChange.
+    this.mappingManager = MappingManager.fromJSON(
+      this.app.vault,
+      this.settings.mappings,
+      () => this.scheduleMappingSave()
+    );
+
+    // Гарантируем что корневая папка синхронизации присутствует в маппинге.
+    // Без неё BitrixController.createFile / BitrixMap.getFileByMapId не смогут
+    // найти родителя для файлов первого уровня, и стационарный поток + catch-up
+    // будут молча промахиваться по корневым файлам.
+    if (this.settings.folderId) {
+      const rootId = String(this.settings.folderId);
+      if (!this.mappingManager.getById(rootId)) {
+        this.mappingManager.add({
+          id: rootId,
+          path: '/',
+          name: 'root',
+          isFolder: true,
+          lastLocalMtime: Date.now(),
+          lastUpdatBitrix: Date.now(),
+        });
+      }
+    }
+
     // Инициализация сервиса синхронизации
     this.syncService = new SyncService(
       this.bitrix24Api,
@@ -210,80 +270,128 @@ export default class Bitrix24Sync extends Plugin {
   }
 
   addCommands() {
-    // Команда полной синхронизации
     this.addCommand({
-      id: 'sync-with-bitrix-disk',
-      name: 'Sync with Bitrix.Disk',
-      callback: () => this.syncWithBitrix()
+      id: 'push-all-to-bitrix',
+      name: 'Выгрузить всё в Битрикс24',
+      callback: () => { void this.runPushAll(); }
+    });
+
+    this.addCommand({
+      id: 'pull-all-from-bitrix',
+      name: 'Загрузить всё из Битрикс24',
+      callback: () => { void this.runPullAll(); }
+    });
+
+    this.addCommand({
+      id: 'catch-up-from-bitrix',
+      name: 'Догнать изменения из Битрикс24',
+      callback: () => { void this.runCatchUp(); }
     });
 
     this.addCommand({
       id: 'clear-mapping',
       name: 'Сбросить карту',
-      callback: () => {this.mappingManager.mappings=[]}
+      callback: () => { this.mappingManager.clear(); }
     });
   }
 
-  async addPeriodicSync(){
-    if (this.isSyncing) return;
-    await this.syncWithBitrix();
-    setTimeout(()=>this.addPeriodicSync(), this.settings.syncInterval*1000*60);
+  /**
+   * Полная выгрузка локального vault в Битрикс24.
+   * Сервис ставит общую очередь на паузу на время работы и снимает по выходу.
+   */
+  async runPushAll(): Promise<void> {
+    if (!this.isConnectionConfigured()) {
+      new Notice('Настройте подключение и папку синхронизации');
+      return;
+    }
+    const service = new PushAllService(
+      this.app,
+      this.app.vault,
+      this.bitrix24Api,
+      this.mappingManager,
+      this.syncService,
+      this.logger,
+      String(this.settings.folderId)
+    );
+    try {
+      const res = await service.run();
+      // Полная сверка с Битриксом → можно сдвинуть lastSync.
+      this.settings.lastSync = Date.now();
+      // Принудительный flush маппинга (на всякий случай — debounce уже стоит в очереди).
+      this.settings.mappings = this.mappingManager.toJSON();
+      await this.saveSettings();
+      new Notice(
+        `Готово. Создано: ${res.created}, обновлено: ${res.updated}, удалено: ${res.deleted}, ошибок: ${res.errors.length}`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.log('runPushAll: ошибка', 'ERROR', { error: msg });
+      new Notice('Ошибка выгрузки в Битрикс24: ' + msg);
+    }
   }
 
-  async syncWithBitrix(){
-    if (!this.settings.access_token || !this.settings.client_endpoint) {
-      new Notice('Please configure Bitrix24 API access in settings');
+  /**
+   * Полная загрузка из Битрикс24 в локальный vault.
+   */
+  async runPullAll(): Promise<void> {
+    if (!this.isConnectionConfigured()) {
+      new Notice('Настройте подключение и папку синхронизации');
       return;
     }
-
-    if (this.isSyncing) {
-      new Notice('Синхронизация уже выполняется');
-      return;
-    }
-
-    this.isSyncing = true;
-
-    if (!this.settings.folderId){
-      new Notice('Укажите папку синхронизации в настройках');
-      this.isSyncing=false;
-      return;
-    }
-
+    const service = new PullAllService(
+      this.app,
+      this.app.vault,
+      this.bitrix24Api,
+      this.mappingManager,
+      this.syncService,
+      this.logger,
+      String(this.settings.folderId)
+    );
     try {
-      const folderId=String(this.settings.folderId)
-      this.mappingManager.add({
-        id:folderId,
-        path:'/',
-        name:'root',
-        isFolder:true,
-        lastLocalMtime:new Date().getTime(),
-        lastUpdatBitrix:new Date().getTime(),
-      });
-      this.syncService.setLastSync(this.settings.lastSync||0);
-      // this.syncService.setLastSync(0);
-
-      const bitrixMap=new BitrixMap(this.bitrix24Api);
-      bitrixMap.addToMap({
-        id:folderId,
-        path:'/',
-        bitrixUrl:'',
-        name:'root',
-        isFolder:true,
-        lastUpdate:new Date().getTime()
-      })
-      await bitrixMap.fillMapping([{folderId, folderName:'/'}]);
-      await this.syncService.sync(bitrixMap);
-      
-      this.settings.lastSync=new Date().getTime();
-      this.settings.mappings=this.mappingManager.toJSON();
-      this.saveSettings();
-    } catch (error) {
-      this.logger.log('Error during sync with Bitrix.Disk:', 'ERROR', error);
-      new Notice(`Sync error: ${error.message || 'Unknown error'}`);
+      const res = await service.run();
+      this.settings.lastSync = Date.now();
+      this.settings.mappings = this.mappingManager.toJSON();
+      await this.saveSettings();
+      new Notice(
+        `Готово. Создано: ${res.created}, обновлено: ${res.updated}, удалено: ${res.deleted}, ошибок: ${res.errors.length}`
+      );
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.log('runPullAll: ошибка', 'ERROR', { error: msg });
+      new Notice('Ошибка загрузки из Битрикс24: ' + msg);
     }
-    finally{
-      this.isSyncing = false;
+  }
+
+  /**
+   * Догнать пропущенные изменения Битрикса (на старте плагина или вручную).
+   * lastSync обновляется внутри сервиса через setLastSync-колбэк.
+   */
+  async runCatchUp(): Promise<void> {
+    if (!this.isConnectionConfigured()) {
+      new Notice('Настройте подключение и папку синхронизации');
+      return;
+    }
+    const service = new CatchUpService(
+      this.app,
+      this.app.vault,
+      this.bitrix24Api,
+      this.mappingManager,
+      this.syncService,
+      this.logger,
+      String(this.settings.folderId),
+      () => this.settings.lastSync || 0,
+      (ts: number) => {
+        this.settings.lastSync = ts;
+        // saveSettings возвращает Promise — fire-and-forget внутри колбэка.
+        void this.saveSettings();
+      }
+    );
+    // CatchUpService.run сам ловит свои ошибки; внешний try на всякий случай.
+    try {
+      await service.run();
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      this.logger.log('runCatchUp: непредвиденная ошибка', 'ERROR', { error: msg });
     }
   }
 }
-

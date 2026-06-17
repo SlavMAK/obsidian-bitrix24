@@ -135,15 +135,11 @@ export class LocalController{
 
   public async deleteFolder(folder:TFolder, localMap:FileMapping){
     await this.vault.trash(folder, false);
-    const idxLocalMap=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
-    if (idxLocalMap===-1) return;
-    this.mappingManager.mappings.splice(idxLocalMap,1);
+    this.mappingManager.remove(localMap.id);
   }
 
   public async deleteFile(file:TFile, localMap:FileMapping){
     await this.vault.trash(file, false);
-    const idxLocalMap=this.mappingManager.mappings.findIndex(el=>el.id===localMap.id);
-    if (idxLocalMap===-1) return;
-    this.mappingManager.mappings.splice(idxLocalMap,1);
+    this.mappingManager.remove(localMap.id);
   }
 }

@@ -16,18 +16,25 @@ export interface DiffContents {
 export class ConflictResolutionModal extends Modal {
   private conflict: DiffContents;
   private mergeResult: string;
-  private onResolve: (resolution: 'local' | 'remote' | 'merged', content?: string) => void;
+  private onResolve: (resolution: 'local' | 'remote' | 'merged' | undefined, content?: string) => void;
   private editorEl: HTMLTextAreaElement;
+  private resolved = false;
 
   constructor(
-    app: App, 
-    conflict: DiffContents, 
-    onResolve: (resolution: 'local' | 'remote' | 'merged', content?: string) => void
+    app: App,
+    conflict: DiffContents,
+    onResolve: (resolution: 'local' | 'remote' | 'merged' | undefined, content?: string) => void
   ) {
     super(app);
     this.conflict = conflict;
     this.mergeResult = conflict.localContent; // По умолчанию используем локальную версию
     this.onResolve = onResolve;
+  }
+
+  private resolveWith(resolution: 'local' | 'remote' | 'merged' | undefined, content?: string) {
+    if (this.resolved) return;
+    this.resolved = true;
+    this.onResolve(resolution, content);
   }
 
   onOpen() {
@@ -103,35 +110,36 @@ export class ConflictResolutionModal extends Modal {
     }
 
     const actionsContainer = contentEl.createDiv('modal-button-container');
-    
+
     // Кнопка "Отмена"
     new ButtonComponent(actionsContainer)
       .setButtonText('Отмена')
       .onClick(() => {
+        this.resolveWith(undefined);
         this.close();
       });
-    
+
     new ButtonComponent(actionsContainer)
       .setButtonText('Использовать локальную')
       .onClick(() => {
+        this.resolveWith('local');
         this.close();
-        this.onResolve('local');
       });
-      
+
     new ButtonComponent(actionsContainer)
       .setButtonText('Использовать из Bitrix24')
       .onClick(() => {
+        this.resolveWith('remote');
         this.close();
-        this.onResolve('remote');
       });
-    
+
     if (this.conflict.showContent){
       new ButtonComponent(actionsContainer)
         .setButtonText('Сохранить объединенную')
         .setCta()
         .onClick(() => {
+          this.resolveWith('merged', this.mergeResult);
           this.close();
-          this.onResolve('merged', this.mergeResult);
         });
     }
     
@@ -154,6 +162,11 @@ export class ConflictResolutionModal extends Modal {
   }
 
   onClose() {
+    // Если модалку закрыли через Esc / клик-вне — резолвим undefined,
+    // чтобы EventQueue гарантированно сняла паузу.
+    if (!this.resolved) {
+      this.resolveWith(undefined);
+    }
     const { contentEl } = this;
     contentEl.empty();
   }

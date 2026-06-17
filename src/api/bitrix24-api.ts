@@ -229,6 +229,9 @@ export class Bitrix24Api {
             return this;
         } catch (error) {
             console.error('Error fetching token from oauth.bitrix.info:', error);
+            new Notice('Не удалось обновить токен Битрикс24. Откройте настройки и переподключитесь.');
+            // Бросаем выше, чтобы callMethod / callBatch не продолжали со stale-токеном.
+            throw error;
         }
     }
 
@@ -256,7 +259,7 @@ export class Bitrix24Api {
           urlConnection+=`&clientId=${server.clientId}`;
         }
         this.webSocketClient = new WebSocket(urlConnection);
-        this.webSocketClient.onopen = function(e) {
+        this.webSocketClient.onopen = function() {
           console.log("[open] Соединение установлено");
         };
 
